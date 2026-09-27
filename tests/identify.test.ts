@@ -108,7 +108,9 @@ describe('identifyChord — other tunings', () => {
   });
   it('bass is the lowest *pitch*, not the lowest string', () => {
     // Low E string at fret 7 (B2) sits above the open A string (A2) → A is the bass.
-    expect(identifyChord(shape('70xxxx'))).toEqual([]); // only two notes, B & A — no chord
+    // Two notes (B2 over A2): still named — any combination of notes gets a name — with A as the bass.
+    const dyad = identifyChord(shape('70xxxx'))[0].chord;
+    expect(dyad.bassPc ?? dyad.rootPc).toBe(9);
     const res = identifyChord(shape('7022xx')); // B2 A2 E3 A3
     expect(res[0].name).toBe('Asus2');
   });

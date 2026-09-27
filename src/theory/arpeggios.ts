@@ -7,9 +7,10 @@
 
 import { chordName, chordPcs, chordType, spellChord, type ChordSpec, type ChordType } from './chords';
 import { nameOverRoot } from './identify';
+import { nameFromSemis } from './custom';
 import { degree, labelInChord, prettyDegree } from './intervals';
 import { defaultSpelling, formatNote, mod12, spellWithLetter, type AccidentalPref, type PitchClass, type SpelledNote } from './notes';
-import { chooseScaleRoot, modeOf, scalePcs, scaleType, spellScale } from './scales';
+import { chooseScaleRoot, modeOf, scalePcs, scaleType, spellScale, type Mood } from './scales';
 
 export interface ArpNote {
   pc: PitchClass;
@@ -44,16 +45,14 @@ const ORDINAL: Record<number, string> = { 1: 'root', 2: '2nd', 3: '3rd', 4: '4th
 
 function soundName(target: ChordSpec, pcs: PitchClass[], pref: AccidentalPref): string | null {
   const base: ChordSpec = { ...target, bassPc: undefined };
-  const basePcs = chordPcs(base);
-  const union = [...new Set([...basePcs, ...pcs])];
+  const union = [...new Set([...chordPcs(base), ...pcs])];
+  const rootSpelling = spellChord(target, pref).root;
   const t = nameOverRoot(target.rootPc, union);
-  if (t) return chordName({ rootPc: target.rootPc, type: t, rootSpelling: spellChord(target, pref).root }, pref);
-  // No standard symbol: describe as the chord plus its added tensions, e.g. "Am(add 11, ♭13)".
-  const extra = pcs
-    .filter((p) => !basePcs.includes(p))
-    .sort((a, b) => mod12(a - target.rootPc) - mod12(b - target.rootPc))
-    .map((p) => prettyDegree(labelInChord(p - target.rootPc, target.type.degrees)));
-  return extra.length ? `${chordName(base, pref)}(add ${extra.join(', ')})` : chordName(base, pref);
+  if (t) return chordName({ rootPc: target.rootPc, type: t, rootSpelling }, pref);
+  // No standard symbol: use the generic name, e.g. "Am(add11, add♭13)".
+  let mask = 0;
+  for (const p of union) mask |= 1 << mod12(p - target.rootPc);
+  return chordName({ rootPc: target.rootPc, type: nameFromSemis(mask, false).type, rootSpelling }, pref);
 }
 
 /** Spell a note relative to the target chord using its degree label (e.g. the 9 of B is C♯). */
@@ -349,17 +348,22 @@ export interface ScaleSuggestion extends ScaleContext {
   label: string;
   notes: string;
   info: string;
+  moods: Mood[];
+  root: SpelledNote;
 }
 
 export function suggestScales(target: ChordSpec, pref: AccidentalPref = 'auto', context?: ScaleContext): ScaleSuggestion[] {
   const out: ScaleSuggestion[] = [];
   for (const sc of chordScales({ ...target, bassPc: undefined }, context)) {
-    const root = chooseScaleRoot(sc.rootPc, sc.scaleId, pref);
+    // Scales on the chord's root use the chord's own spelling (E♭ Blues over E♭…, not D♯ Blues).
+    const root = sc.rootPc === target.rootPc ? spellChord(target, pref).root : chooseScaleRoot(sc.rootPc, sc.scaleId, pref);
     out.push({
       ...sc,
       label: `${formatNote(root)} ${scaleType(sc.scaleId).name}`,
       notes: spellScale(root, sc.rootPc, sc.scaleId).map(formatNote).join(' '),
       info: scaleType(sc.scaleId).info,
+      moods: scaleType(sc.scaleId).moods,
+      root,
     });
   }
   return out.slice(0, 5);

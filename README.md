@@ -6,6 +6,9 @@ standard, drop, open, 7-string, 8-string, baritone, bass, or your own custom tun
 - **Chord finder** — a schematic fretboard with every note labelled. Click frets (or open strings) to
   build a shape, and the app names the most likely chord, with alternative interpretations ranked
   by likelihood (e.g. `Am7` vs `C6/A`), the chord tones, formula, inversion and omitted notes.
+  **Any combination of two or more notes gets a name** — anything outside the chord dictionary is
+  described as a base chord plus additions, altered fifths and omissions, e.g. E♭ A B♭ →
+  `E♭(add♯11, no3)`, C G B → `Cmaj7(no3)`, C E B♭ D♭ F♯ → `C7♭9(♯11)`.
 - **Arpeggios** — one click shows, side by side:
   - the chord's **own arpeggio** (plus simpler 7th/triad "core" versions), and
   - **suggested arpeggios** that sound good over it, each explained: *"Em7 over Cmaj7 — built on the
@@ -14,15 +17,21 @@ standard, drop, open, 7-string, 8-string, baritone, bass, or your own custom tun
   - Everything is shown across the whole neck or in a 5-fret playing position, colour-coded by
     interval, and can be played back.
 - **Other voicings** — playable fingerings of the detected chord generated for the current tuning.
-- **Progression builder** — type a progression (`Am7 | D7 | Gmaj7 Cmaj7`), load an example, or add
-  chords from the finder. The app works out:
+- **Progression builder** — type a progression (`Am7 | D7 | Gmaj7 Cmaj7`), load an example, add
+  chords from the finder, or use *Quick add* (root, quality, added note, omitted notes, slash bass).
+  Symbols with modifiers are understood: `Eb(add#11,no3)`, `C7(b9,#11)`, `G7sus4(b9)`, `C9(b5)`,
+  `Cmaj7(no3)`, `Dm(add b6)`, `C(omit3)`… The app works out:
   - the **most likely key / tonal centre**, the **root note (tonic)** and the **base (tonic) chord**,
     with a confidence score, alternative readings you can switch to, and the reasons (cadences, etc.);
   - modes (Dorian vamps, Mixolydian rock, blues), harmonic-minor V chords, secondary dominants
     (`V7/ii`), borrowed chords, tritone substitutes and figured-bass inversions;
   - a chord-by-chord table: Roman numeral, function (tonic / subdominant / dominant), chord tones,
     chord-scale and arpeggio ideas;
-  - soloing scales for the whole progression;
+  - **every scale in the library (41, from major and pentatonic to Phrygian dominant, Hungarian
+    minor, Hirajoshi, bebop, symmetrical scales…) ranked by how closely it fits the progression**,
+    each with a fit %, mood tags (happy, bright, dreamy, soulful, jazzy, bluesy, sad, dark, spicy,
+    exotic, tense, mysterious, eerie…), and a comment on what clashes (*"F♯ rubs against F (F)"*) or
+    what it leaves out; filter by mood and open any scale on the fretboard;
   - **arpeggios through the changes**: every chord's arpeggio (or a substitute) in the *same
     position* so you can practise connecting them, plus voicing diagrams for your tuning;
   - playback of the chords or the arpeggios at any tempo.
@@ -81,10 +90,12 @@ src/
   theory/            pure TypeScript music-theory engine (no UI code, fully unit-tested)
     notes.ts         pitch classes, MIDI, enharmonic spelling
     intervals.ts     degree labels (♭3, ♯11, ♭♭7 …) and naming notes relative to a chord
-    chords.ts        ~50 chord types, chord spelling
+    chords.ts        53 chord types, chord spelling
+    custom.ts        names any note set as base chord + add/alterations/no (E♭(add♯11, no3))
     identify.ts      chord identification from sounding notes, with ranking
     parse.ts         chord-symbol parser (Am7, C#m7b5, Bbmaj7/D, G7(#9), F6/9, Eø, D-7 …)
-    scales.ts        22 scales/modes
+    scales.ts        41 scales/modes with mood tags
+    scaleFit.ts      ranks scales by how closely they fit a progression
     arpeggios.ts     exact arpeggios + substitute-arpeggio suggestions + chord-scales
     key.ts           key/tonal-centre detection, Roman numerals, harmonic function
     voicings.ts      playable-voicing generator for any tuning
@@ -108,7 +119,16 @@ tests/               vitest suites (identification, parsing, keys, arpeggios, vo
   added (9, 11, 13, ♯11, ♭9…), avoid notes (e.g. natural 11 over a major 3rd) and the classic
   "build it on the 3rd/5th/7th" relationships. The resulting sound (`Em7` over `C` = `Cmaj9`) is
   named by re-running the identifier.
-- **Key detection**: all 12 tonics × major, minor, Dorian, Mixolydian, Lydian and Phrygian are scored
+- **Generic chord names**: when the dictionary has no exact match, the notes are described as the
+  dictionary chord needing the fewest changes plus modifiers (`add♯11`, `♭5`, `no3`). The name is
+  always parseable, so every result can be added to a progression; a test checks all 4,083
+  possible note sets round-trip exactly.
+- **Scale ranking**: each scale is placed on the tonic and compared with a weighted profile of the
+  chord tones (roots/3rds/7ths count more): coverage of the harmony, minus clashes (a scale note a
+  half step from a chord tone the scale lacks), minus a small cost for colour notes (more if they
+  are avoid notes). In a blues, the ♭3/♭5 blue notes count as idiomatic rather than clashes.
+- **Key detection**: all 12 tonics × major, minor, Dorian, Mixolydian, Lydian, Phrygian and Phrygian
+  dominant are scored
   on diatonic fit (with partial credit for harmonic-minor V, secondary dominants and borrowed
   chords), tonic emphasis (first/last chord, frequency, prominence of the tonic triad), cadences
   (V→I, ii–V–I, ♭VII→I, IV→i …) and a small prior for how common each mode is.

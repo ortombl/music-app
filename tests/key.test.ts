@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { chordName } from '../src/theory/chords';
-import { analyzeChord, detectKey, progressionScales, tonicChord } from '../src/theory/key';
+import { analyzeChord, detectKey, tonicChord } from '../src/theory/key';
 import { parseProgression } from '../src/theory/parse';
 
 function analyse(text: string) {
@@ -35,6 +35,8 @@ describe('detectKey', () => {
     ['Bb Eb F Bb', 'B♭ major'],
     ['F#m D A E', 'F♯ minor'],
     ['Db Ab Bbm Gb', 'D♭ major'],
+    ['E F E F', 'E Phrygian dominant'],
+    ['Am G F E', 'A minor'],
   ])('%s → %s', (prog, expected) => {
     expect(analyse(prog).key.name).toBe(expected);
   });
@@ -81,13 +83,6 @@ describe('Roman numeral analysis', () => {
   it('tonic chord prefers the version in the progression', () => {
     const r = analyse('Dm7 G7 Cmaj7');
     expect(chordName(tonicChord(r.key, r.chords))).toBe('Cmaj7');
-  });
-  it('recommends soloing scales', () => {
-    const r = analyse('Am Dm E7 Am');
-    const labels = progressionScales(r.key, r.chords).map((s) => s.label);
-    expect(labels).toContain('A Natural minor (Aeolian)');
-    expect(labels).toContain('A Minor pentatonic');
-    expect(labels).toContain('A Harmonic minor');
   });
   it('chord-scales follow the key', () => {
     const r = analyse('Dm7 G7 Cmaj7');

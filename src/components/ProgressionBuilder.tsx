@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { exactArpeggios, scaleLabel, suggestArpeggios, type Arpeggio } from '../theory/arpeggios';
-import { CHORD_TYPES, chordName, chordPcs, chordTypeLabel, spellChord, type ChordSpec } from '../theory/chords';
+import { CHORD_TYPES, chordName, chordPcs, chordTypeLabel, spellChord } from '../theory/chords';
 import { arpeggioRun, positionForMidi, rootPositions, type FretWindow } from '../theory/fretboard';
-import { analyzeChord, detectKey, progressionScales, tonicChord, type ChordAnalysis, type KeyCandidate } from '../theory/key';
-import { degree } from '../theory/intervals';
+import { analyzeChord, detectKey, tonicChord, type ChordAnalysis, type KeyCandidate } from '../theory/key';
+import { rankScalesForProgression } from '../theory/scaleFit';
+import { prettyDegree } from '../theory/intervals';
 import { formatNote, mod12, pcName } from '../theory/notes';
 import { parseChordSymbol, parseProgression, type ParsedChord } from '../theory/parse';
 import { chooseScaleRoot, scaleType, spellScale } from '../theory/scales';
@@ -15,6 +16,7 @@ import { LabelToggle, NoteMap, type MapLabels, type PcInfo } from './NoteMap';
 import { PositionPicker } from './PositionPicker';
 import { Legend } from './Legend';
 import { ArpeggioExplorer } from './ArpeggioExplorer';
+import { ScaleRanking } from './ScaleRanking';
 
 interface Props {
   settings: Settings;
@@ -55,6 +57,8 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
   const [qRoot, setQRoot] = useState(0);
   const [qType, setQType] = useState('maj');
   const [qBass, setQBass] = useState(-1);
+  const [qAdd, setQAdd] = useState('');
+  const [qOmit, setQOmit] = useState('');
   const [keyIdx, setKeyIdx] = useState(0);
   const [win, setWin] = useState<FretWindow | null>(null);
   const [labels, setLabels] = useState<MapLabels>(settings.labelMode === 'intervals' ? 'intervals' : 'notes');
@@ -63,7 +67,6 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
   const [playing, setPlaying] = useState<'chords' | 'arps' | null>(null);
   const [activeChord, setActiveChord] = useState<number | null>(null);
   const [activeNote, setActiveNote] = useState<{ chord: number; string: number; fret: number } | null>(null);
-  const [scaleView, setScaleView] = useState<number | null>(null);
   const [detail, setDetail] = useState<number | null>(null);
 
   const chords = useMemo(() => items.map((s) => parseChordSymbol(s)).filter((c): c is ParsedChord => c !== null), [items]);
@@ -71,7 +74,6 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
   useEffect(() => {
     setKeyIdx(0);
     setArpChoice({});
-    setScaleView(null);
   }, [itemsKey]);
   useEffect(() => () => stopAll(), []);
 
@@ -84,7 +86,7 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
   const subs = useMemo(() => chords.map((c, i) => suggestArpeggios(c, { pref, context: analyses[i]?.scale, limit: 5 })), [chords, analyses, pref]);
   const exacts = useMemo(() => chords.map((c) => exactArpeggios(c, pref)[0]), [chords, pref]);
   const voicings: Voicing[][] = useMemo(() => chords.map((c) => generateVoicings(c, tuning, settings.frets, { limit: 3 })), [chords, tuning, settings.frets]);
-  const scales = useMemo(() => (key ? progressionScales(key, chords, pref) : []), [key, chords, pref]);
+  const scaleFits = useMemo(() => (key ? rankScalesForProgression(chords, key.tonicPc, { pref, bluesy: key.bluesy, tonic: key.tonic }) : []), [key, chords, pref]);
   const positions = useMemo(() => (key ? rootPositions(tuning, settings.frets, key.tonicPc) : []), [key, tuning, settings.frets]);
 
   useEffect(() => {
@@ -100,10 +102,17 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
       if (!r.errors.length) setText('');
     }
   };
-  const addQuick = () => {
+  // The quick-add chord is composed as a symbol ("E♭(add#11,no3)/A") and run through the parser,
+  // so it gets exactly the same canonical name as a typed chord.
+  const quickChord = useMemo(() => {
     const t = CHORD_TYPES.find((x) => x.id === qType)!;
-    const c: ChordSpec = { rootPc: qRoot, type: t, bassPc: qBass >= 0 && qBass !== qRoot ? qBass : undefined };
-    setItems((prev) => [...prev, chordName(c, pref)]);
+    const mods = [qAdd && `add${qAdd}`, ...qOmit.split(',').filter(Boolean).map((n) => `no${n}`)].filter(Boolean);
+    const bass = qBass >= 0 && qBass !== qRoot ? `/${pcName(qBass, pref)}` : '';
+    const symbol = `${pcName(qRoot, pref)}${t.symbol}${mods.length ? `(${mods.join(',')})` : ''}${bass}`;
+    return parseChordSymbol(symbol);
+  }, [qRoot, qType, qBass, qAdd, qOmit, pref]);
+  const addQuick = () => {
+    if (quickChord) setItems((prev) => [...prev, quickChord.display]);
   };
   const move = (i: number, d: number) =>
     setItems((prev) => {
@@ -171,15 +180,6 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
       setActiveChord(null);
       setActiveNote(null);
     });
-  };
-
-  const scaleInfo = (idx: number): Map<number, PcInfo> => {
-    const s = scales[idx];
-    const m = new Map<number, PcInfo>();
-    const root = chooseScaleRoot(s.ctx.rootPc, s.ctx.scaleId, pref);
-    const spelled = spellScale(root, s.ctx.rootPc, s.ctx.scaleId);
-    scaleType(s.ctx.scaleId).degrees.forEach((d, i) => m.set(mod12(s.ctx.rootPc + degree(d).semi), { degree: d, name: formatNote(spelled[i]) }));
-    return m;
   };
 
   const tonic = key ? tonicChord(key, chords) : null;
@@ -271,8 +271,23 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
               </option>
             ))}
           </select>
-          <button type="button" className="btn" onClick={addQuick}>
-            + Add {chordName({ rootPc: qRoot, type: CHORD_TYPES.find((x) => x.id === qType)!, bassPc: qBass >= 0 && qBass !== qRoot ? qBass : undefined }, pref)}
+          <select aria-label="Added note" value={qAdd} onChange={(e) => setQAdd(e.target.value)}>
+            <option value="">no added note</option>
+            {['b9', '9', '#9', '11', '#11', 'b13', '13', '2', '4', '6', '7'].map((a) => (
+              <option key={a} value={a}>
+                add {prettyDegree(a)}
+                {a === '7' ? ' (maj 7)' : ''}
+              </option>
+            ))}
+          </select>
+          <select aria-label="Omitted notes" value={qOmit} onChange={(e) => setQOmit(e.target.value)}>
+            <option value="">omit nothing</option>
+            <option value="3">no 3rd</option>
+            <option value="5">no 5th</option>
+            <option value="3,5">no 3rd, no 5th</option>
+          </select>
+          <button type="button" className="btn" onClick={addQuick} disabled={!quickChord}>
+            + Add {quickChord ? quickChord.display : '…'}
           </button>
         </div>
 
@@ -379,39 +394,7 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
               <li key={r}>{r}</li>
             ))}
           </ul>
-          <div className="solo-scales">
-            <div className="kicker">Scales for soloing over the whole progression</div>
-            <div className="chips">
-              {scales.map((s, i) => (
-                <button
-                  type="button"
-                  key={s.label}
-                  className={`chip${scaleView === i ? ' active' : ''}`}
-                  aria-pressed={scaleView === i}
-                  title={`${s.notes} — ${s.why}`}
-                  onClick={() => setScaleView(scaleView === i ? null : i)}
-                >
-                  {s.label}
-                </button>
-              ))}
-            </div>
-            {scaleView !== null && scales[scaleView] && (
-              <div className="scale-view">
-                <p className="muted small">
-                  {scales[scaleView].label}: {scales[scaleView].notes} — {scales[scaleView].why}.
-                </p>
-                <NoteMap
-                  tuning={tuning}
-                  settings={settings}
-                  info={scaleInfo(scaleView)}
-                  win={win}
-                  labels={labels}
-                  ringPc={scales[scaleView].ctx.rootPc}
-                  ariaLabel={`${scales[scaleView].label} on the fretboard`}
-                />
-              </div>
-            )}
-          </div>
+          <ScaleRanking fits={scaleFits} tuning={tuning} settings={settings} win={win} labels={labels} />
         </section>
       )}
 

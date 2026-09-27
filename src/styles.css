@@ -662,6 +662,9 @@ input[type='range'] {
   margin: 2px 0 4px;
   overflow-wrap: anywhere;
 }
+.chord-name.long {
+  font-size: 2.1rem;
+}
 .chord-long {
   color: var(--text-muted);
   margin-bottom: 10px;
@@ -1322,5 +1325,182 @@ td.roman {
   }
   .card {
     padding: 12px;
+  }
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Ranked scales & moods
+   ------------------------------------------------------------------------------------------- */
+.solo-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.scale-rank {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.scale-rank li {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.scale-rank li.open {
+  border-color: var(--accent);
+}
+.scale-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 26px minmax(190px, 1.1fr) minmax(120px, 170px) minmax(0, 2.2fr);
+  gap: 4px 14px;
+  align-items: center;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.scale-row:hover {
+  background: var(--surface-3);
+}
+.sr-rank {
+  font-weight: 800;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.sr-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.sr-name {
+  font-weight: 750;
+}
+.sr-moods {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.sr-fit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sr-fit .bar {
+  flex: 1;
+  height: 8px;
+  background: var(--surface-3);
+  border-radius: 99px;
+  overflow: hidden;
+}
+.sr-fit .fill {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+}
+.fill.great {
+  background: #22a55a;
+}
+.fill.good {
+  background: #13a89e;
+}
+.fill.ok {
+  background: #e0a100;
+}
+.fill.poor {
+  background: #e5484d;
+}
+.sr-fit b {
+  font-variant-numeric: tabular-nums;
+  min-width: 40px;
+  text-align: right;
+}
+.sr-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 0.86rem;
+}
+.sr-notes {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+}
+.sr-comment {
+  color: var(--text-muted);
+}
+.sr-comment.has-clash {
+  color: var(--warning-text);
+}
+.scale-rank .scale-view {
+  padding: 2px 12px 12px;
+}
+.scale-rank .scale-view .fretboard-scroll {
+  background: var(--surface);
+  border-radius: 10px;
+  padding: 4px 2px 0;
+}
+.mood {
+  --mc: var(--text-muted);
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0 7px;
+  border-radius: 99px;
+  line-height: 1.65;
+  background: color-mix(in srgb, var(--mc) 16%, transparent);
+  color: color-mix(in srgb, var(--mc) 78%, var(--text));
+  white-space: nowrap;
+}
+.chip.mood-chip {
+  color: color-mix(in srgb, var(--mc) 78%, var(--text));
+  border-color: color-mix(in srgb, var(--mc) 45%, var(--border));
+}
+.chip.mood-chip.active {
+  background: var(--mc);
+  border-color: var(--mc);
+  color: #fff;
+}
+.mood-safe { --mc: #16a34a; }
+.mood-happy { --mc: #d97706; }
+.mood-bright { --mc: #ca8a04; }
+.mood-dreamy { --mc: #0ea5e9; }
+.mood-soulful { --mc: #0d9488; }
+.mood-jazzy { --mc: #8b5cf6; }
+.mood-bluesy { --mc: #3b82f6; }
+.mood-rock { --mc: #dc2626; }
+.mood-sad { --mc: #6366f1; }
+.mood-bittersweet { --mc: #db2777; }
+.mood-epic { --mc: #9333ea; }
+.mood-cinematic { --mc: #0891b2; }
+.mood-dark { --mc: #7c8aa5; }
+.mood-spicy { --mc: #ea580c; }
+.mood-exotic { --mc: #c026d3; }
+.mood-tense { --mc: #e11d48; }
+.mood-mysterious { --mc: #7c3aed; }
+.mood-eerie { --mc: #65a30d; }
+
+@media (max-width: 900px) {
+  .scale-row {
+    grid-template-columns: 24px minmax(0, 1fr) 130px;
+  }
+  .sr-detail {
+    grid-column: 2 / -1;
+  }
+}
+@media (max-width: 520px) {
+  .scale-row {
+    grid-template-columns: 22px minmax(0, 1fr);
+  }
+  .sr-fit {
+    grid-column: 2;
   }
 }

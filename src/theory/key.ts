@@ -10,10 +10,10 @@
 
 import { chordName, chordPcs, chordType, isMinorish, type ChordSpec } from './chords';
 import { formatNote, mod12, type AccidentalPref, type PitchClass, type SpelledNote } from './notes';
-import { chooseScaleRoot, modeOf, scalePcs, scaleType, spellScale } from './scales';
+import { chooseScaleRoot, modeOf, scalePcs } from './scales';
 import type { ScaleContext } from './arpeggios';
 
-export type KeyMode = 'major' | 'minor' | 'dorian' | 'mixolydian' | 'lydian' | 'phrygian';
+export type KeyMode = 'major' | 'minor' | 'dorian' | 'mixolydian' | 'lydian' | 'phrygian' | 'phrygianDominant';
 
 interface ModeInfo {
   scale: string;
@@ -29,6 +29,7 @@ export const MODES: Record<KeyMode, ModeInfo> = {
   mixolydian: { scale: 'mixolydian', label: 'Mixolydian', minorTonic: false, prior: 0.4 },
   lydian: { scale: 'lydian', label: 'Lydian', minorTonic: false, prior: -0.3 },
   phrygian: { scale: 'phrygian', label: 'Phrygian', minorTonic: true, prior: -0.3 },
+  phrygianDominant: { scale: 'phrygianDominant', label: 'Phrygian dominant', minorTonic: false, prior: -0.35 },
 };
 
 export interface KeyCandidate {
@@ -175,6 +176,9 @@ export function detectKey(chords: ChordSpec[], pref: AccidentalPref = 'auto'): K
         } else if (deg === 1 && mode === 'phrygian') {
           cad += 0.6 * w;
           cadNames.add('♭II → i (Phrygian cadence)');
+        } else if (deg === 1 && mode === 'phrygianDominant') {
+          cad += 0.7 * w;
+          cadNames.add('♭II → I (flamenco cadence)');
         } else if (deg === 2 && mode === 'lydian' && fam !== 'minor') {
           cad += 0.5 * w;
           cadNames.add('II → I (Lydian)');
@@ -321,7 +325,7 @@ export function analyzeChord(c: ChordSpec, key: KeyCandidate, next?: ChordSpec, 
     const majorMap: Record<number, HarmonicFunction> = { 0: 'T', 4: 'T', 9: 'T', 2: 'S', 5: 'S', 7: 'D', 11: 'D' };
     const minorMap: Record<number, HarmonicFunction> = { 0: 'T', 3: 'T', 8: 'S', 2: 'S', 5: 'S', 7: 'D', 11: 'D', 10: 'D' };
     if (mode === 'mixolydian' && deg === 10) return 'S';
-    if (mode === 'phrygian' && deg === 1) return 'D';
+    if ((mode === 'phrygian' || mode === 'phrygianDominant') && deg === 1) return 'D';
     return (minorKey ? minorMap : majorMap)[deg] ?? '';
   };
 
@@ -333,6 +337,7 @@ export function analyzeChord(c: ChordSpec, key: KeyCandidate, next?: ChordSpec, 
       else if (mode === 'mixolydian' && deg === 10) note = 'Characteristic Mixolydian ♭VII chord';
       else if (mode === 'lydian' && deg === 2) note = 'Characteristic Lydian II chord (♯4)';
       else if (mode === 'phrygian' && deg === 1) note = 'Characteristic Phrygian ♭II chord';
+      else if (mode === 'phrygianDominant' && deg === 1) note = 'Characteristic ♭II chord — the flamenco / Spanish cadence';
       else if (mode === 'minor' && deg === 7) note = 'Minor v chord (natural minor)';
       break;
     case 'harmonic':
@@ -384,60 +389,6 @@ export function analyzeChord(c: ChordSpec, key: KeyCandidate, next?: ChordSpec, 
   }
   const funcLabel = func === 'T' ? 'Tonic' : func === 'S' ? 'Subdominant' : func === 'D' ? 'Dominant' : '—';
   return { roman, func, funcLabel, diatonic: fit.kind === 'diatonic' || fit.kind === 'harmonic', note, scale };
-}
-
-export interface ScaleAdvice {
-  label: string;
-  notes: string;
-  why: string;
-  ctx: ScaleContext;
-}
-
-/** Scales to solo with over the whole progression. */
-export function progressionScales(key: KeyCandidate, chords: ChordSpec[], pref: AccidentalPref = 'auto'): ScaleAdvice[] {
-  const out: ScaleAdvice[] = [];
-  const add = (rootPc: number, scaleId: string, why: string) => {
-    if (out.some((o) => o.ctx.rootPc === rootPc && o.ctx.scaleId === scaleId)) return;
-    const root = chooseScaleRoot(rootPc, scaleId, pref);
-    out.push({
-      label: `${formatNote(root)} ${scaleType(scaleId).name}`,
-      notes: spellScale(root, rootPc, scaleId).map(formatNote).join(' '),
-      why,
-      ctx: { rootPc, scaleId },
-    });
-  };
-  const t = key.tonicPc;
-  const bluesy = chords.some((c) => c.rootPc === t && c.type.family === 'dominant');
-  if (bluesy) {
-    add(t, 'blues', 'Dominant tonic chord — blues sound');
-    add(t, 'minorPentatonic', 'Classic blues/rock choice');
-  }
-  add(t, key.scaleId, 'Parent scale of the key — fits every diatonic chord');
-  switch (key.mode) {
-    case 'major':
-      add(t, 'majorPentatonic', 'Safe, no avoid notes');
-      add(mod12(t + 9), 'minorPentatonic', 'Relative minor pentatonic (same notes as major pentatonic)');
-      break;
-    case 'minor':
-      add(t, 'minorPentatonic', 'Safe, no avoid notes');
-      add(t, 'blues', 'Adds the ♭5 blue note');
-      if (chords.some((c) => chordFit(c, t, 'minor').kind === 'harmonic')) add(t, 'harmonicMinor', 'Over the major V chord');
-      break;
-    case 'dorian':
-      add(t, 'minorPentatonic', 'Safe choice; add the natural 6th for Dorian colour');
-      break;
-    case 'mixolydian':
-      add(t, 'majorPentatonic', 'Safe choice');
-      add(t, 'minorPentatonic', 'Bluesy/rock option');
-      break;
-    case 'lydian':
-      add(t, 'majorPentatonic', 'Safe choice; add the ♯4 for Lydian colour');
-      break;
-    case 'phrygian':
-      add(t, 'minorPentatonic', 'Safe choice; add the ♭2 for Phrygian colour');
-      break;
-  }
-  return out;
 }
 
 /** The tonic ("home") chord of the key, preferring a version that appears in the progression. */

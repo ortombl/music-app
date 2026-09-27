@@ -10,6 +10,7 @@ import { sequence, stopAll } from '../audio/synth';
 import { LabelToggle, NoteMap, intervalText, type MapLabels, type PcInfo } from './NoteMap';
 import { PositionPicker } from './PositionPicker';
 import { Legend } from './Legend';
+import { MoodTag } from './ScaleRanking';
 
 interface Props {
   chord: ChordSpec;
@@ -60,7 +61,7 @@ export function ArpeggioExplorer({ chord, settings, tuning, context }: Props) {
     if (!rightScale) return null;
     const m = new Map<number, PcInfo>();
     const chordSet = new Set(chordPcs({ ...chord, bassPc: undefined }));
-    const root = chooseScaleRoot(rightScale.rootPc, rightScale.scaleId, pref);
+    const root = rightScale.root ?? chooseScaleRoot(rightScale.rootPc, rightScale.scaleId, pref);
     const spelled = spellScale(root, rightScale.rootPc, rightScale.scaleId);
     scaleType(rightScale.scaleId).degrees.forEach((d, i) => {
       const pc = mod12(rightScale.rootPc + degree(d).semi);
@@ -216,7 +217,10 @@ export function ArpeggioExplorer({ chord, settings, tuning, context }: Props) {
                 </button>
               </div>
               <p className="desc">
-                <b>{rightScale.label}.</b> {rightScale.info}
+                <b>{rightScale.label}.</b> {rightScale.info}{' '}
+                {rightScale.moods.map((m) => (
+                  <MoodTag key={m} mood={m} />
+                ))}
               </p>
             </>
           )}
@@ -234,6 +238,7 @@ export function ArpeggioExplorer({ chord, settings, tuning, context }: Props) {
                   onClick={() => setRight({ kind: 'scale', idx: i })}
                 >
                   {s.label}
+                  <span className="chip-note">{s.moods.join(' · ')}</span>
                 </button>
               );
             })}

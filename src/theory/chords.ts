@@ -85,6 +85,7 @@ const DEFS: ChordDef[] = [
   { id: 'maj7#5', symbol: 'maj7♯5', name: 'augmented major 7th', degrees: ['1', '3', '#5', '7'], prior: 0.35, family: 'augmented', aliases: ['maj7#5', 'augmaj7', '+maj7', 'maj7aug', 'maj7+'], scales: ['lydianAugmented'] },
   { id: '7b5', symbol: '7♭5', name: 'dominant 7th flat 5', degrees: ['1', '3', 'b5', 'b7'], prior: 0.4, family: 'dominant', aliases: ['7b5'], scales: ['wholeTone', 'lydianDominant', 'altered'] },
   { id: '7sus4', symbol: '7sus4', name: 'dominant 7th suspended 4th', degrees: ['1', '4', '5', 'b7'], optional: ['5'], prior: 0.7, family: 'suspended', aliases: ['7sus4', '7sus', 'sus7'], scales: ['mixolydian', 'dorian'] },
+  { id: 'maj7sus4', symbol: 'maj7sus4', name: 'major 7th suspended 4th', degrees: ['1', '4', '5', '7'], optional: ['5'], prior: 0.3, family: 'suspended', aliases: ['maj7sus4', 'maj7sus'], scales: ['ionian'] },
   { id: '7sus2', symbol: '7sus2', name: 'dominant 7th suspended 2nd', degrees: ['1', '2', '5', 'b7'], prior: 0.35, family: 'suspended', aliases: ['7sus2'], scales: ['mixolydian', 'dorian'] },
 
   // Added-note chords
@@ -211,9 +212,11 @@ export function spellChord(chord: ChordSpec, pref: AccidentalPref = 'auto'): Spe
   let bass: SpelledNote | undefined;
   if (chord.bassPc !== undefined && chord.bassPc !== chord.rootPc) {
     const bassPref: AccidentalPref = pref !== 'auto' ? pref : root.acc < 0 ? 'flat' : root.acc > 0 ? 'sharp' : 'auto';
+    const toneSpelling = tones.find((x) => x.pc === chord.bassPc)?.note;
     bass =
       chord.bassSpelling ??
-      tones.find((x) => x.pc === chord.bassPc)?.note ??
+      // a slash bass reads better as a plain note name than as a double flat/sharp
+      (toneSpelling && Math.abs(toneSpelling.acc) < 2 ? toneSpelling : undefined) ??
       defaultSpelling(chord.bassPc, bassPref);
   }
   const name = formatNote(root) + chord.type.symbol + (bass ? '/' + formatNote(bass) : '');

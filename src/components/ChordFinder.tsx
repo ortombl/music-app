@@ -182,18 +182,15 @@ export function ChordFinder({ settings, tuning, selection, setSelection, onAddTo
         )}
         {notes.length > 0 && !match && (
           <div className="empty">
-            <div className="empty-title">
-              {pcs.map((p) => pcName(p, pref)).join(' + ')}
-              {pcs.length === 2 && <span className="muted"> · {INTERVAL_NAMES[mod12(pcs[1] - pcs[0])]}</span>}
-            </div>
-            <p>{pcs.length < 3 ? 'Add more notes to form a chord.' : 'These notes do not form a chord in the dictionary.'}</p>
+            <div className="empty-title">Single note: {notes.map((n) => midiName(n.midi, pref)).join(', ')}</div>
+            <p>Add at least one more note — any combination of two or more notes gets a chord name.</p>
           </div>
         )}
         {match && spelled && (
           <div className="result-grid">
             <div className="chord-hero">
               <div className="kicker">{match === matches[0] ? 'Most likely chord' : 'Your chosen interpretation'}</div>
-              <div className="chord-name">{match.name}</div>
+              <div className={`chord-name${match.name.length > 9 ? ' long' : ''}`}>{match.name}</div>
               <div className="chord-long">
                 {formatNote(spelled.root)} {match.chord.type.name}
                 {spelled.bass && ` over ${formatNote(spelled.bass)}`}
@@ -225,6 +222,15 @@ export function ChordFinder({ settings, tuning, selection, setSelection, onAddTo
                 <dt>Formula</dt>
                 <dd>{match.chord.type.degrees.map(prettyDegree).join(' – ')}</dd>
               </div>
+              {pcs.length === 2 && (
+                <div>
+                  <dt>Interval</dt>
+                  <dd>
+                    {nameOf(match.chord.rootPc)} → {nameOf(pcs.find((p) => p !== match.chord.rootPc)!)}:{' '}
+                    {INTERVAL_NAMES[mod12(pcs.find((p) => p !== match.chord.rootPc)! - match.chord.rootPc)]}
+                  </dd>
+                </div>
+              )}
               <div>
                 <dt>Bass</dt>
                 <dd>

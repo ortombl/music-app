@@ -7,6 +7,7 @@
 // what is in the bass (root position > 1st inversion > 2nd inversion > other slash chords).
 
 import { CHORD_TYPES, chordName, spellChord, type ChordSpec, type ChordType } from './chords';
+import { nameFromSemis } from './custom';
 import { degree } from './intervals';
 import { mod12, type AccidentalPref, type PitchClass } from './notes';
 
@@ -41,7 +42,8 @@ function omittedDegrees(t: ChordType, mask: number): string[] {
 
 /**
  * Identify chords from a list of sounding MIDI notes.
- * Returns candidates sorted from most to least likely (empty if fewer than two pitch classes).
+ * Returns candidates sorted from most to least likely. Any combination of two or more pitch
+ * classes gets at least one name; a single note returns nothing.
  */
 export function identifyChord(midis: number[], pref: AccidentalPref = 'auto', limit = 8): ChordMatch[] {
   if (midis.length === 0) return [];
@@ -89,6 +91,28 @@ export function identifyChord(midis: number[], pref: AccidentalPref = 'auto', li
         out.push({ chord, name: chordName(chord, pref), omitted, inversion: 'slash', score, probability: 0 });
       }
     }
+  }
+
+  // 3) Generic names for anything the dictionary cannot describe well — e.g. E♭ A B♭ is
+  //    E♭(add♯11, no3). Used when there is no dictionary match at all, or when no dictionary
+  //    chord has the bass note as its root (so "C(add♯11)" beats "Em(add9)/C").
+  const hasRootPosition = out.some((m) => m.inversion === 'root');
+  for (const root of pcs) {
+    if (out.length > 0 && (hasRootPosition || root !== bassPc)) continue;
+    const g = nameFromSemis(maskFrom(pcs, root), false);
+    const t = g.type;
+    const bassLabel = t.degreeInfo.find((d) => mod12(root + d.semi) === bassPc)?.label;
+    const isRoot = bassPc === root;
+    const chord: ChordSpec = { rootPc: root, type: t, bassPc: isRoot ? undefined : bassPc };
+    out.push({
+      chord,
+      name: chordName(chord, pref),
+      omitted: g.omittedSilent,
+      inversion: isRoot ? 'root' : 'inversion',
+      bassDegree: bassLabel,
+      score: 70 - 12 * g.cost + (bassLabel ? (BASS_BONUS[bassLabel] ?? 0) : 0),
+      probability: 0,
+    });
   }
 
   // Deduplicate by displayed name, keep best score.
