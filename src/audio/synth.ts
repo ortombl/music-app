@@ -80,10 +80,12 @@ export interface NoteEvent {
   onStart?: () => void;
 }
 
+export type EndReason = 'ended' | 'stopped';
+
 interface Playback {
   sources: AudioBufferSourceNode[];
   timers: number[];
-  onEnd?: () => void;
+  onEnd?: (reason: EndReason) => void;
 }
 
 let current: Playback | null = null;
@@ -102,11 +104,11 @@ export function stopAll(): void {
       /* already stopped */
     }
   }
-  p.onEnd?.();
+  p.onEnd?.('stopped');
 }
 
 /** Schedule a list of note events. Any previous playback is stopped first. */
-export function play(events: NoteEvent[], onEnd?: () => void): void {
+export function play(events: NoteEvent[], onEnd?: (reason: EndReason) => void): void {
   stopAll();
   const ac = audio();
   const out = master!;
@@ -140,20 +142,20 @@ export function play(events: NoteEvent[], onEnd?: () => void): void {
     window.setTimeout(() => {
       if (current === pb) {
         current = null;
-        onEnd?.();
+        onEnd?.('ended');
       }
     }, (end + 0.2) * 1000),
   );
 }
 
 /** Strum a chord (low → high). */
-export function strum(midis: number[], onEnd?: () => void): void {
+export function strum(midis: number[], onEnd?: (reason: EndReason) => void): void {
   const sorted = [...midis].sort((a, b) => a - b);
   play([{ time: 0, midis: sorted, strum: 0.035, duration: 2.2 }], onEnd);
 }
 
 /** Play notes one after another. */
-export function sequence(midis: number[], bpm: number, onStep?: (i: number) => void, onEnd?: () => void): void {
+export function sequence(midis: number[], bpm: number, onStep?: (i: number) => void, onEnd?: (reason: EndReason) => void): void {
   const step = 60 / bpm / 2; // eighth notes
   play(
     midis.map((m, i) => ({ time: i * step, midis: [m], duration: Math.max(0.35, step * 1.8), gain: 0.9, onStart: onStep ? () => onStep(i) : undefined })),

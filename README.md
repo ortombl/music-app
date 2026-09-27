@@ -11,11 +11,14 @@ standard, drop, open, 7-string, 8-string, baritone, bass, or your own custom tun
   `E♭(add♯11, no3)`, C G B → `Cmaj7(no3)`, C E B♭ D♭ F♯ → `C7♭9(♯11)`.
 - **Arpeggios** — one click shows, side by side:
   - the chord's **own arpeggio** (plus simpler 7th/triad "core" versions), and
-  - **suggested arpeggios** that sound good over it, each explained: *"Em7 over Cmaj7 — built on the
+  - up to 20 **suggested arpeggios** that sound good over it, **ranked by a fit %** (triads, 7ths,
+    sus, 6ths, add9, 9ths, 6/9, altered dominants…), each explained: *"Em7 over Cmaj7 — built on the
     3rd, adds the 9 → Cmaj9 sound"*, *"Em7♭5 over C7 → C9"*, *"G♯dim7 over E7 → E7♭9"*…
   - the **scales** that fit the chord (Dorian, Mixolydian, Lydian, altered, pentatonics…).
   - Everything is shown across the whole neck or in a 5-fret playing position, colour-coded by
-    interval, and can be played back.
+    interval. Every arpeggio and scale can be **played on its own or over the chord** (a strummed
+    chord and bass note underneath the line), with adjustable tempo and the current note lit up on
+    the fretboard.
 - **Other voicings** — playable fingerings of the detected chord generated for the current tuning.
 - **Progression builder** — type a progression (`Am7 | D7 | Gmaj7 Cmaj7`), load an example, add
   chords from the finder, or use *Quick add* (root, quality, added note, omitted notes, slash bass).
@@ -31,10 +34,14 @@ standard, drop, open, 7-string, 8-string, baritone, bass, or your own custom tun
     minor, Hirajoshi, bebop, symmetrical scales…) ranked by how closely it fits the progression**,
     each with a fit %, mood tags (happy, bright, dreamy, soulful, jazzy, bluesy, sad, dark, spicy,
     exotic, tense, mysterious, eerie…), and a comment on what clashes (*"F♯ rubs against F (F)"*) or
-    what it leaves out; filter by mood and open any scale on the fretboard;
+    what it leaves out; filter by mood, open any scale on the fretboard, and **play it on its own or
+    as a line over the chords of the progression** (it lands on a chord tone at every change);
   - **arpeggios through the changes**: every chord's arpeggio (or a substitute) in the *same
     position* so you can practise connecting them, plus voicing diagrams for your tuning;
-  - playback of the chords or the arpeggios at any tempo.
+  - playback: the chords alone, or **all the arpeggios as one voice-led line over the chords**
+    (each chord's line starts on the note nearest to where the previous one ended), optional chord
+    backing, loop and tempo; every chord card also has its own ▶ / ▶ over-chord buttons, and each
+    card's arpeggio menu lists the chord's arpeggio plus 20 substitutes with their fit %.
 - **Tunings** — 24 presets plus a string-by-string editor (3–10 strings). Changing the tuning
   re-computes everything: chord names (the bass is the lowest *pitch*, which matters in drop and open
   tunings), arpeggio maps, positions and voicings.
@@ -101,7 +108,10 @@ src/
     voicings.ts      playable-voicing generator for any tuning
     tunings.ts       tuning presets
     fretboard.ts     fretboard geometry, positions, arpeggio runs
+    lines.ts         practice lines: voice-led arpeggio lines, scale lines over chord changes
   audio/synth.ts     Karplus–Strong plucked-string synth (Web Audio API)
+  audio/arrange.ts   melody over strummed chord + bass backing → scheduled notes
+  audio/usePlayer.ts play / stop / loop state for the UI
   components/        React UI (SVG fretboard, chord diagrams, finder, explorer, progression)
   state/settings.ts  settings persisted in localStorage
 tests/               vitest suites (identification, parsing, keys, arpeggios, voicings, robustness)
@@ -114,11 +124,13 @@ tests/               vitest suites (identification, parsing, keys, arpeggios, vo
   Candidates are ranked by how common the chord is, omitted tones, and — most importantly — the bass
   note (root position > 1st inversion > 2nd inversion > other slash chords). Slash chords with a
   non-chord bass (`D/C`, `G/A`) are also considered.
-- **Substitute arpeggios**: candidate triads and 7th chords are drawn from the chord-scale (or from
-  the key, inside a progression) and scored by chord tones, guide tones (3rds/7ths), colour tones
-  added (9, 11, 13, ♯11, ♭9…), avoid notes (e.g. natural 11 over a major 3rd) and the classic
-  "build it on the 3rd/5th/7th" relationships. The resulting sound (`Em7` over `C` = `Cmaj9`) is
-  named by re-running the identifier.
+- **Substitute arpeggios**: 26 arpeggio shapes on every note of the chord-scales (the key's mode
+  first, inside a progression) are rated with a fit % = 35 % consonance (chord tones and available
+  tensions; avoid notes such as a natural 11 over a major 3rd count less) + 25 % outline (does it
+  contain the 3rd, 7th, characteristic tones?) + 15 % colour (9ths, 11ths, 13ths added) + 25 %
+  familiarity (common shape, built on the 3rd/5th/7th), with small costs for 5-note shapes and for
+  sharing the chord's root. Duplicate note sets (Em7 = G6) are merged. The resulting sound
+  (`Em7` over `C` = `Cmaj9`) is named by re-running the identifier.
 - **Generic chord names**: when the dictionary has no exact match, the notes are described as the
   dictionary chord needing the fewest changes plus modifiers (`add♯11`, `♭5`, `no3`). The name is
   always parseable, so every result can be added to a progression; a test checks all 4,083

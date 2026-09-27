@@ -315,7 +315,7 @@ export function ChordFinder({ settings, tuning, selection, setSelection, onAddTo
         )}
       </section>
 
-      <div ref={arpRef}>{match && showArps && <ArpeggioExplorer chord={match.chord} settings={settings} tuning={tuning} />}</div>
+      <div ref={arpRef}>{match && showArps && <ArpeggioExplorer chord={match.chord} settings={settings} tuning={tuning} backingMidis={midis} />}</div>
     </>
   );
 }

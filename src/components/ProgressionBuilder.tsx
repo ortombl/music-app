@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { exactArpeggios, scaleLabel, suggestArpeggios, type Arpeggio } from '../theory/arpeggios';
 import { CHORD_TYPES, chordName, chordPcs, chordTypeLabel, spellChord } from '../theory/chords';
 import { arpeggioRun, positionForMidi, rootPositions, type FretWindow } from '../theory/fretboard';
@@ -10,7 +10,11 @@ import { parseChordSymbol, parseProgression, type ParsedChord } from '../theory/
 import { chooseScaleRoot, scaleType, spellScale } from '../theory/scales';
 import { generateVoicings, type Voicing } from '../theory/voicings';
 import type { Settings } from '../state/settings';
-import { play, stopAll, type NoteEvent } from '../audio/synth';
+import { arrange, bassNote, type Bar } from '../audio/arrange';
+import { usePlayer } from '../audio/usePlayer';
+import { lineFromRoot, pitchPool, scaleLineOverChords, voiceLedLines } from '../theory/lines';
+import { scalePcs } from '../theory/scales';
+import type { ScaleFit } from '../theory/scaleFit';
 import { ChordDiagram } from './ChordDiagram';
 import { LabelToggle, NoteMap, type MapLabels, type PcInfo } from './NoteMap';
 import { PositionPicker } from './PositionPicker';
@@ -64,9 +68,14 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
   const [labels, setLabels] = useState<MapLabels>(settings.labelMode === 'intervals' ? 'intervals' : 'notes');
   const [arpChoice, setArpChoice] = useState<Record<number, number>>({});
   const [tempo, setTempo] = useState(90);
-  const [playing, setPlaying] = useState<'chords' | 'arps' | null>(null);
+  const [backingOn, setBackingOn] = useState(true);
+  const [loop, setLoop] = useState(false);
+  const loopRef = useRef(loop);
+  loopRef.current = loop;
+  const player = usePlayer();
   const [activeChord, setActiveChord] = useState<number | null>(null);
   const [activeNote, setActiveNote] = useState<{ chord: number; string: number; fret: number } | null>(null);
+  const [scaleActive, setScaleActive] = useState<{ scaleId: string; string: number; fret: number } | null>(null);
   const [detail, setDetail] = useState<number | null>(null);
 
   const chords = useMemo(() => items.map((s) => parseChordSymbol(s)).filter((c): c is ParsedChord => c !== null), [items]);
@@ -75,7 +84,6 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
     setKeyIdx(0);
     setArpChoice({});
   }, [itemsKey]);
-  useEffect(() => () => stopAll(), []);
 
   const keys = useMemo(() => detectKey(chords, pref), [chords, pref]);
   const key: KeyCandidate | undefined = keys[Math.min(keyIdx, keys.length - 1)];
@@ -83,7 +91,7 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
     () => (key ? chords.map((c, i) => analyzeChord(c, key, chords[i + 1], pref)) : []),
     [chords, key, pref],
   );
-  const subs = useMemo(() => chords.map((c, i) => suggestArpeggios(c, { pref, context: analyses[i]?.scale, limit: 5 })), [chords, analyses, pref]);
+  const subs = useMemo(() => chords.map((c, i) => suggestArpeggios(c, { pref, context: analyses[i]?.scale, limit: 20 })), [chords, analyses, pref]);
   const exacts = useMemo(() => chords.map((c) => exactArpeggios(c, pref)[0]), [chords, pref]);
   const voicings: Voicing[][] = useMemo(() => chords.map((c) => generateVoicings(c, tuning, settings.frets, { limit: 3 })), [chords, tuning, settings.frets]);
   const scaleFits = useMemo(() => (key ? rankScalesForProgression(chords, key.tonicPc, { pref, bluesy: key.bluesy, tonic: key.tonic }) : []), [key, chords, pref]);
@@ -129,58 +137,89 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
     return choice >= 0 && subs[i][choice] ? subs[i][choice] : exacts[i];
   };
 
-  const stop = () => {
-    stopAll();
-    setPlaying(null);
+  // ---- Playback -------------------------------------------------------------------------------
+  const backingVoicing = (i: number) => voicings[i]?.[0]?.midis ?? chordPcs(chords[i]).map((pc) => 48 + pc);
+  const bassFor = (i: number) => bassNote(chords[i].bassPc ?? chords[i].rootPc);
+  const clearHighlights = () => {
     setActiveChord(null);
     setActiveNote(null);
+    setScaleActive(null);
   };
-
-  const playChords = () => {
-    const bar = (4 * 60) / tempo;
-    const events: NoteEvent[] = [];
-    chords.forEach((c, i) => {
-      const v = voicings[i][0];
-      const midis = v ? v.midis : chordPcs(c).map((pc) => 48 + pc);
-      events.push({ time: i * bar, midis, strum: 0.03, duration: bar * 0.48, onStart: () => setActiveChord(i) });
-      events.push({ time: i * bar + bar / 2, midis, strum: 0.025, duration: bar * 0.48, gain: 0.6 });
-    });
-    setPlaying('chords');
-    play(events, () => {
-      setPlaying(null);
-      setActiveChord(null);
-    });
+  const run = (id: string, bars: () => Bar[]) =>
+    player.toggle(id, () => arrange(bars(), { bpm: tempo }), { loop: () => loopRef.current, onDone: clearHighlights });
+  const showNote = (i: number, midi: number) => {
+    const pos = positionForMidi(tuning, settings.frets, midi, win);
+    setActiveChord(i);
+    setActiveNote(pos ? { chord: i, string: pos.string, fret: pos.fret } : null);
   };
+  const withBacking = (i: number, on: boolean): Pick<Bar, 'chord' | 'bass'> => (on ? { chord: backingVoicing(i), bass: bassFor(i) } : {});
 
-  const playArps = () => {
-    const eighth = 60 / tempo / 2;
-    const events: NoteEvent[] = [];
-    chords.forEach((c, i) => {
+  /** The chords alone, one bar each. */
+  const playChords = () =>
+    run('chords', () => chords.map((_, i) => ({ ...withBacking(i, true), melody: [], onBar: () => setActiveChord(i) })));
+
+  /** Every chord's chosen arpeggio as one voice-led line through the changes (optionally over the chords). */
+  const playArps = () =>
+    run('arps', () => {
+      const pools = chords.map((_, i) => pitchPool(tuning, settings.frets, arpFor(i).notes.map((n) => n.pc), win));
+      const lines = voiceLedLines(
+        pools,
+        chords.map((_, i) => arpFor(i).chord.rootPc),
+        8,
+      );
+      return chords.map((_, i) => ({
+        ...withBacking(i, backingOn),
+        melody: lines[i],
+        onBar: () => setActiveChord(i),
+        onNote: (k: number) => showNote(i, lines[i][k]),
+      }));
+    });
+
+  /** One chord's arpeggio, alone or over its chord (two bars). */
+  const playCardArp = (i: number, over: boolean) =>
+    run(`card-${i}-${over ? 'over' : 'solo'}`, () => {
       const a = arpFor(i);
-      const run = arpeggioRun(tuning, settings.frets, a.notes.map((n) => n.pc), a.chord.rootPc, win);
-      const up = run.slice(0, Math.ceil(run.length / 2) + 1).slice(0, 8);
-      const notes = up.length ? up : chordPcs(c).map((pc) => 48 + pc);
-      notes.forEach((m, k) => {
-        const pos = positionForMidi(tuning, settings.frets, m, win);
-        events.push({
-          time: (i * 8 + k) * eighth,
-          midis: [m],
-          duration: eighth * 1.8,
-          gain: 0.85,
-          onStart: () => {
-            setActiveChord(i);
-            setActiveNote(pos ? { chord: i, string: pos.string, fret: pos.fret } : null);
-          },
-        });
-      });
+      const line = lineFromRoot(pitchPool(tuning, settings.frets, a.notes.map((n) => n.pc), win), a.chord.rootPc, 16);
+      return [line.slice(0, 8), line.slice(8)].map((notes) => ({
+        ...withBacking(i, over),
+        melody: notes,
+        onBar: () => setActiveChord(i),
+        onNote: (k: number) => showNote(i, notes[k]),
+      }));
     });
-    setPlaying('arps');
-    play(events, () => {
-      setPlaying(null);
-      setActiveChord(null);
-      setActiveNote(null);
+
+  /** A scale alone (up and down), or as a line over the whole progression that lands on chord tones. */
+  const playScale = (fit: ScaleFit, over: boolean) =>
+    run(`scale-${fit.ctx.scaleId}-${over ? 'over' : 'solo'}`, () => {
+      const pcs = scalePcs(fit.ctx.rootPc, fit.ctx.scaleId);
+      const mark = (midi: number) => {
+        const pos = positionForMidi(tuning, settings.frets, midi, win);
+        setScaleActive(pos ? { scaleId: fit.ctx.scaleId, string: pos.string, fret: pos.fret } : null);
+      };
+      if (!over) {
+        const runNotes = arpeggioRun(tuning, settings.frets, pcs, fit.ctx.rootPc, win);
+        const bars: Bar[] = [];
+        for (let b = 0; b < runNotes.length; b += 8) {
+          const notes = runNotes.slice(b, b + 8);
+          bars.push({ melody: notes, onNote: (k) => mark(notes[k]) });
+        }
+        return bars;
+      }
+      const pool = pitchPool(tuning, settings.frets, pcs, win);
+      const lines = scaleLineOverChords(
+        pool,
+        chords.map((c) => new Set(chordPcs(c))),
+        fit.ctx.rootPc,
+        8,
+      );
+      return chords.map((_, i) => ({
+        ...withBacking(i, true),
+        melody: lines[i],
+        onBar: () => setActiveChord(i),
+        onNote: (k: number) => mark(lines[i][k]),
+      }));
     });
-  };
+  const label = (id: string, text: string) => (player.playing === id ? '■ Stop' : text);
 
   const tonic = key ? tonicChord(key, chords) : null;
   const relative = key
@@ -394,7 +433,16 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
               <li key={r}>{r}</li>
             ))}
           </ul>
-          <ScaleRanking fits={scaleFits} tuning={tuning} settings={settings} win={win} labels={labels} />
+          <ScaleRanking
+            fits={scaleFits}
+            tuning={tuning}
+            settings={settings}
+            win={win}
+            labels={labels}
+            playing={player.playing}
+            active={scaleActive}
+            onPlay={playScale}
+          />
         </section>
       )}
 
@@ -455,7 +503,13 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
       )}
 
       {key && detail !== null && chords[detail] && (
-        <ArpeggioExplorer chord={chords[detail]} settings={settings} tuning={tuning} context={analyses[detail]?.scale} />
+        <ArpeggioExplorer
+          chord={chords[detail]}
+          settings={settings}
+          tuning={tuning}
+          context={analyses[detail]?.scale}
+          backingMidis={voicings[detail]?.[0]?.midis}
+        />
       )}
 
       {key && chords.length > 0 && (
@@ -472,26 +526,34 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
           </div>
           <PositionPicker positions={positions} value={win} onChange={setWin} frets={settings.frets} />
           <div className="player row gap wrap">
-            {playing ? (
-              <button type="button" className="btn primary" onClick={stop}>
-                ■ Stop
-              </button>
-            ) : (
-              <>
-                <button type="button" className="btn primary" onClick={playChords}>
-                  ▶ Play chords
-                </button>
-                <button type="button" className="btn" onClick={playArps}>
-                  ▶ Play arpeggios
-                </button>
-              </>
-            )}
+            <button type="button" className="btn primary" onClick={playArps}>
+              {label('arps', backingOn ? '▶ Arpeggios over the chords' : '▶ Arpeggios only')}
+            </button>
+            <button type="button" className="btn" onClick={playChords}>
+              {label('chords', '▶ Chords only')}
+            </button>
+            <label className="check" title="Strum each chord (with a bass note) under the arpeggio line">
+              <input type="checkbox" checked={backingOn} onChange={(e) => setBackingOn(e.target.checked)} />
+              Chord backing
+            </label>
+            <label className="check">
+              <input type="checkbox" checked={loop} onChange={(e) => setLoop(e.target.checked)} />
+              Loop
+            </label>
             <label className="field inline">
               <span>Tempo</span>
               <input type="range" min={50} max={200} value={tempo} onChange={(e) => setTempo(Number(e.target.value))} aria-label="Tempo in BPM" />
               <span className="tempo">{tempo} BPM</span>
             </label>
+            {player.playing && player.playing !== 'arps' && player.playing !== 'chords' && (
+              <button type="button" className="btn" onClick={player.stop}>
+                ■ Stop
+              </button>
+            )}
           </div>
+          <p className="muted small player-hint">
+            The arpeggio line moves to the nearest note at every chord change (voice leading), eight notes per chord, inside the chosen position.
+          </p>
           <div className="prog-grid">
             {chords.map((c, i) => {
               const a = arpFor(i);
@@ -503,6 +565,14 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
                     <span className="pc-title">{c.display}</span>
                     <span className="pc-roman">{an.roman}</span>
                     <span className={`func-badge ${FUNC_CLASS[an.func]}`}>{an.funcLabel}</span>
+                    <span className="pc-play">
+                      <button type="button" className="btn small" onClick={() => playCardArp(i, false)} title={`Play the ${a.name} arpeggio`}>
+                        {label(`card-${i}-solo`, '▶')}
+                      </button>
+                      <button type="button" className="btn small" onClick={() => playCardArp(i, true)} title={`Play the ${a.name} arpeggio over ${c.display}`}>
+                        {label(`card-${i}-over`, '▶ over chord')}
+                      </button>
+                    </span>
                   </header>
                   <select
                     aria-label={`Arpeggio for ${c.display}`}
@@ -514,7 +584,7 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
                     </option>
                     {subs[i].map((s, j) => (
                       <option key={s.id} value={j}>
-                        {s.name} over {c.display}
+                        {Math.round(s.fit * 100)}% · {s.name} over {c.display}
                         {s.sound && s.sound !== c.display ? ` → ${s.sound}` : ''}
                       </option>
                     ))}

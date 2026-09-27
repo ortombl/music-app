@@ -1504,3 +1504,57 @@ td.roman {
     grid-column: 2;
   }
 }
+
+/* Playback controls ------------------------------------------------------------------------ */
+.scale-li {
+  display: flex;
+  align-items: stretch;
+}
+.scale-li .scale-row {
+  flex: 1;
+  min-width: 0;
+}
+.sr-play {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 10px 6px 0;
+}
+.sr-play .btn {
+  white-space: nowrap;
+}
+.scale-rank li.sounding {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.pc-play {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 4px;
+}
+.player-hint {
+  margin: -4px 0 0;
+}
+.sub-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+}
+.sub-fit {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 900px) {
+  .scale-li {
+    flex-direction: column;
+  }
+  .sr-play {
+    flex-direction: row;
+    padding: 0 12px 10px 48px;
+  }
+}

@@ -13,6 +13,12 @@ interface Props {
   settings: Settings;
   win: FretWindow | null;
   labels: MapLabels;
+  /** Id of what is currently playing ("scale-<id>-solo" / "scale-<id>-over"). */
+  playing?: string | null;
+  /** The note being played, to highlight on the open scale's fretboard. */
+  active?: { scaleId: string; string: number; fret: number } | null;
+  /** Play a scale alone, or over the chords of the progression. */
+  onPlay?: (fit: ScaleFit, over: boolean) => void;
 }
 
 const MOOD_ORDER: Mood[] = [
@@ -36,7 +42,7 @@ export function MoodTag({ mood }: { mood: Mood }) {
 }
 
 /** Every scale, ranked by how closely it fits the progression, with mood tags and comments. */
-export function ScaleRanking({ fits, tuning, settings, win, labels }: Props) {
+export function ScaleRanking({ fits, tuning, settings, win, labels, playing, active, onPlay }: Props) {
   const [mood, setMood] = useState<Mood | 'all'>('all');
   const [showAll, setShowAll] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
@@ -49,7 +55,7 @@ export function ScaleRanking({ fits, tuning, settings, win, labels }: Props) {
     <div className="solo-scales">
       <div className="solo-head">
         <div className="kicker">Scales for soloing — ranked by how closely they fit the progression</div>
-        <span className="muted small">{fits.length} scales on the tonic · click one to see it on the neck</span>
+        <span className="muted small">{fits.length} scales on the tonic · click one to see it on the neck · ▶ to hear it</span>
       </div>
       <div className="chips mood-filter" role="group" aria-label="Filter scales by mood">
         <button type="button" className={`chip${mood === 'all' ? ' active' : ''}`} aria-pressed={mood === 'all'} onClick={() => setMood('all')}>
@@ -74,31 +80,59 @@ export function ScaleRanking({ fits, tuning, settings, win, labels }: Props) {
           const grade = pct >= 90 ? 'great' : pct >= 75 ? 'good' : pct >= 60 ? 'ok' : 'poor';
           const open = selected === id;
           return (
-            <li key={id} className={open ? 'open' : ''}>
-              <button type="button" className="scale-row" aria-expanded={open} onClick={() => setSelected(open ? null : id)}>
-                <span className="sr-rank">{fits.indexOf(f) + 1}</span>
-                <span className="sr-main">
-                  <span className="sr-name">{f.label}</span>
-                  <span className="sr-moods">
-                    {f.moods.map((m) => (
-                      <MoodTag key={m} mood={m} />
-                    ))}
+            <li key={id} className={`${open ? 'open' : ''}${playing?.startsWith(`scale-${id}-`) ? ' sounding' : ''}`}>
+              <div className="scale-li">
+                <button type="button" className="scale-row" aria-expanded={open} onClick={() => setSelected(open ? null : id)}>
+                  <span className="sr-rank">{fits.indexOf(f) + 1}</span>
+                  <span className="sr-main">
+                    <span className="sr-name">{f.label}</span>
+                    <span className="sr-moods">
+                      {f.moods.map((m) => (
+                        <MoodTag key={m} mood={m} />
+                      ))}
+                    </span>
                   </span>
-                </span>
-                <span className="sr-fit" title="How closely the scale matches the notes of the progression">
-                  <span className="bar">
-                    <span className={`fill ${grade}`} style={{ width: `${pct}%` }} />
+                  <span className="sr-fit" title="How closely the scale matches the notes of the progression">
+                    <span className="bar">
+                      <span className={`fill ${grade}`} style={{ width: `${pct}%` }} />
+                    </span>
+                    <b>{pct}%</b>
                   </span>
-                  <b>{pct}%</b>
-                </span>
-                <span className="sr-detail">
-                  <span className="sr-notes">
-                    {f.notes}
-                    {f.sameAs && <span className="muted"> · {f.sameAs}</span>}
+                  <span className="sr-detail">
+                    <span className="sr-notes">
+                      {f.notes}
+                      {f.sameAs && <span className="muted"> · {f.sameAs}</span>}
+                    </span>
+                    <span className={`sr-comment${f.clashes.length ? ' has-clash' : ''}`}>{f.comment}</span>
                   </span>
-                  <span className={`sr-comment${f.clashes.length ? ' has-clash' : ''}`}>{f.comment}</span>
-                </span>
-              </button>
+                </button>
+                {onPlay && (
+                  <span className="sr-play">
+                    <button
+                      type="button"
+                      className="btn small"
+                      onClick={() => {
+                        setSelected(id);
+                        onPlay(f, false);
+                      }}
+                      title={`Play ${f.label} up and down`}
+                    >
+                      {playing === `scale-${id}-solo` ? '■ Stop' : '▶ Play'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn small"
+                      onClick={() => {
+                        setSelected(id);
+                        onPlay(f, true);
+                      }}
+                      title={`Play ${f.label} as a line over the chords of the progression`}
+                    >
+                      {playing === `scale-${id}-over` ? '■ Stop' : '▶ Over the chords'}
+                    </button>
+                  </span>
+                )}
+              </div>
               {open && (
                 <div className="scale-view">
                   <p className="small">
@@ -111,6 +145,7 @@ export function ScaleRanking({ fits, tuning, settings, win, labels }: Props) {
                     win={win}
                     labels={labels}
                     ringPc={f.ctx.rootPc}
+                    active={active && active.scaleId === id ? active : null}
                     ariaLabel={`${f.label} on the fretboard`}
                   />
                 </div>

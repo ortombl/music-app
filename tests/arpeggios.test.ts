@@ -54,6 +54,36 @@ describe('substitute arpeggios', () => {
   });
 });
 
+describe('more options, ranked by fit', () => {
+  it('offers many options with a fit %, sorted best first', () => {
+    const subs = suggestArpeggios({ rootPc: 0, type: chordType('maj7') }, { limit: 20 });
+    expect(subs.length).toBe(20);
+    for (let i = 1; i < subs.length; i++) expect(subs[i - 1].fit).toBeGreaterThanOrEqual(subs[i].fit);
+    for (const s of subs) {
+      expect(s.fit).toBeGreaterThan(0);
+      expect(s.fit).toBeLessThan(1);
+    }
+    const names = subs.map((s) => s.name);
+    // includes extended shapes as well as the classics
+    expect(names).toEqual(expect.arrayContaining(['Em7', 'Am7', 'Gmaj7', 'Em', 'G']));
+    expect(names.some((n) => /9|6\/9/.test(n))).toBe(true);
+  });
+  it('arpeggios with avoid notes rank below clean ones', () => {
+    const subs = suggestArpeggios({ rootPc: 0, type: chordType('7') }, { limit: 20 });
+    const gm7 = subs.findIndex((s) => s.name === 'Gm7'); // contains the 11 (avoid over C7)
+    const em7b5 = subs.findIndex((s) => s.name === 'Em7♭5');
+    expect(em7b5).toBe(0);
+    if (gm7 >= 0) expect(gm7).toBeGreaterThan(em7b5);
+  });
+  it('never names an arpeggio root B♯ / E♯ / C♭ / F♭', () => {
+    for (const t of ['dim7', 'maj', 'm7', '7', 'maj7']) {
+      for (let r = 0; r < 12; r++) {
+        for (const s of suggestArpeggios({ rootPc: r, type: chordType(t) }, { limit: 20 })) expect(s.name).not.toMatch(/^(B♯|E♯|C♭|F♭)/);
+      }
+    }
+  });
+});
+
 describe('suggestScales', () => {
   it('chord-scales', () => {
     expect(suggestScales({ rootPc: 2, type: chordType('m7') }).map((s) => s.label)[0]).toBe('D Dorian');
