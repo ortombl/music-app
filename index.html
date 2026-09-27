@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Guitar chord finder, arpeggio suggestions and chord-progression analysis for any tuning (6, 7, 8-string, drop, baritone)." />
+    <meta name="theme-color" content="#11151c" />
+    <title>Fretboard Lab</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3c7 0 12 2.6 12 7.4 0 6.8-6.9 15.3-10 18.2a2.9 2.9 0 0 1-4 0C10.9 25.7 4 17.2 4 10.4 4 5.6 9 3 16 3z' fill='%237c6cff'/%3E%3C/svg%3E"
+    />
+    <script>
+      // Apply the saved theme before first paint to avoid a flash.
+      try {
+        var s = JSON.parse(localStorage.getItem('fretboard-lab:settings') || '{}');
+        if (s.theme) document.documentElement.dataset.theme = s.theme;
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>Fretboard Lab needs JavaScript to run.</noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
