@@ -57,7 +57,8 @@ export function lineFromRoot(pool: number[], rootPc: PitchClass, count: number):
  * of its arpeggio nearest to where the previous line ended, and keeps moving in the same
  * direction (bouncing at the edges of the position).
  */
-export function voiceLedLines(pools: number[][], rootPcs: PitchClass[], notesPerChord: number): number[][] {
+export function voiceLedLines(pools: number[][], rootPcs: PitchClass[], notesPerChord: number | number[]): number[][] {
+  const count = (i: number) => (Array.isArray(notesPerChord) ? notesPerChord[i] : notesPerChord);
   let prev: number | null = null;
   let dir: 1 | -1 = 1;
   return pools.map((pool, i) => {
@@ -68,7 +69,7 @@ export function voiceLedLines(pools: number[][], rootPcs: PitchClass[], notesPer
     } else {
       start = nearestIndex(pool, prev + dir, dir);
     }
-    const w = walk(pool, start, dir, notesPerChord);
+    const w = walk(pool, start, dir, count(i));
     dir = w.dir;
     prev = w.notes[w.notes.length - 1];
     return w.notes;
@@ -79,11 +80,12 @@ export function voiceLedLines(pools: number[][], rootPcs: PitchClass[], notesPer
  * A continuous scale line over a progression that lands on a chord tone at every chord change
  * (the downbeat), so the scale is heard *against* the harmony rather than just run up and down.
  */
-export function scaleLineOverChords(pool: number[], chordTones: Set<PitchClass>[], rootPc: PitchClass, notesPerChord: number): number[][] {
+export function scaleLineOverChords(pool: number[], chordTones: Set<PitchClass>[], rootPc: PitchClass, notesPerChord: number | number[]): number[][] {
+  const count = (i: number) => (Array.isArray(notesPerChord) ? notesPerChord[i] : notesPerChord);
   if (!pool.length) return chordTones.map(() => []);
   let idx = Math.max(0, pool.findIndex((m) => mod12(m) === rootPc));
   let dir: 1 | -1 = 1;
-  return chordTones.map((tones) => {
+  return chordTones.map((tones, i) => {
     if (!tones.has(mod12(pool[idx]))) {
       // move to the nearest chord tone, preferring the direction of travel
       for (let d = 1; d < pool.length; d++) {
@@ -99,7 +101,7 @@ export function scaleLineOverChords(pool: number[], chordTones: Set<PitchClass>[
         }
       }
     }
-    const w = walk(pool, idx, dir, notesPerChord);
+    const w = walk(pool, idx, dir, count(i));
     idx = w.end;
     dir = w.dir;
     return w.notes;

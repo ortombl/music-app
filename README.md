@@ -38,6 +38,16 @@ standard, drop, open, 7-string, 8-string, baritone, bass, or your own custom tun
     as a line over the chords of the progression** (it lands on a chord tone at every change);
   - **arpeggios through the changes**: every chord's arpeggio (or a substitute) in the *same
     position* so you can practise connecting them, plus voicing diagrams for your tuning;
+  - an **arrangement editor**: for every chord choose the arpeggio (its own, one of the ranked
+    suggestions, or **type your own** — a chord symbol like `Bbmaj7` / `F#m7b5` / `E(add#11,no3)` or
+    just the notes, e.g. `E G B D`, which is recognised as Em7), the **position** it is played in
+    (same as all, whole neck, or a specific 5-fret window) and its **length** (½, 1 or 2 bars). Typed
+    arpeggios are analysed like the suggestions: fit %, colour tones, resulting sound, avoid notes and
+    notes outside the chord-scale — with a live preview while you type;
+  - **Export / Import**: save the progression with every chord's arpeggio, position and length as a
+    `.txt` file (a readable table plus a small `[data]` section), copy it as text, and load it back
+    later with Import (hand-written files like `Dm7 -> Fmaj7` or a plain `Am F C G` work too; a
+    `tuning:` line switches the tuning). The arrangement is also remembered in the browser;
   - playback: the chords alone, or **all the arpeggios as one voice-led line over the chords**
     (each chord's line starts on the note nearest to where the previous one ended), optional chord
     backing, loop and tempo; every chord card also has its own ▶ / ▶ over-chord buttons, and each
@@ -109,6 +119,8 @@ src/
     tunings.ts       tuning presets
     fretboard.ts     fretboard geometry, positions, arpeggio runs
     lines.ts         practice lines: voice-led arpeggio lines, scale lines over chord changes
+    arpInput.ts      reads a typed arpeggio: chord symbol or a list of notes (recognised)
+    arrangement.ts   per-chord arpeggio/position/length model and the .txt export/import format
   audio/synth.ts     Karplus–Strong plucked-string synth (Web Audio API)
   audio/arrange.ts   melody over strummed chord + bass backing → scheduled notes
   audio/usePlayer.ts play / stop / loop state for the UI
@@ -124,6 +136,10 @@ tests/               vitest suites (identification, parsing, keys, arpeggios, vo
   Candidates are ranked by how common the chord is, omitted tones, and — most importantly — the bass
   note (root position > 1st inversion > 2nd inversion > other slash chords). Slash chords with a
   non-chord bass (`D/C`, `G/A`) are also considered.
+- **Export format**: the top of the file is for people (key, tuning, tempo and a table of chord →
+  arpeggio, notes, fit, sound, position, length); everything after `[data]` is read by Import —
+  `tuning:`, `tempo:`, `position:` and one `chord: Dm7 | arpeggio: Fmaj7 | position: 5-9 | length: 4`
+  line per chord (`-` = the chord's own arpeggio, `all` = the shared position, `neck` = whole neck).
 - **Substitute arpeggios**: 26 arpeggio shapes on every note of the chord-scales (the key's mode
   first, inside a progression) are rated with a fit % = 35 % consonance (chord tones and available
   tensions; avoid notes such as a natural 11 over a major 3rd count less) + 25 % outline (does it

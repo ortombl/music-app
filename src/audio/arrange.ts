@@ -4,6 +4,8 @@
 import type { NoteEvent } from './synth';
 
 export interface Bar {
+  /** Length in beats (default 4 = one bar of 4/4). The backing strums every two beats. */
+  beats?: number;
   /** Backing chord voicing (MIDI notes); omit for no backing. */
   chord?: number[];
   /** Bass note (MIDI) played with the backing. */
@@ -18,37 +20,52 @@ export interface Bar {
 
 export interface ArrangeOptions {
   bpm: number;
-  stepsPerBar?: number;
 }
 
-export function arrange(bars: Bar[], { bpm, stepsPerBar = 8 }: ArrangeOptions): NoteEvent[] {
-  const barDur = (4 * 60) / bpm;
-  const step = barDur / stepsPerBar;
+/** Melody notes are eighth notes: two per beat. */
+export const STEPS_PER_BEAT = 2;
+
+export function arrange(bars: Bar[], { bpm }: ArrangeOptions): NoteEvent[] {
+  const beat = 60 / bpm;
+  const step = beat / STEPS_PER_BEAT;
   const events: NoteEvent[] = [];
-  bars.forEach((b, i) => {
-    const t0 = i * barDur;
+  let t0 = 0;
+  for (const b of bars) {
+    const beats = b.beats ?? 4;
     const hasMelody = b.melody.length > 0;
-    if (b.chord?.length) {
-      const chord = [...b.chord].sort((x, y) => x - y);
-      events.push({ time: t0, midis: chord, strum: 0.03, duration: barDur * 0.5, gain: hasMelody ? 0.42 : 0.85, onStart: b.onBar });
-      events.push({ time: t0 + barDur / 2, midis: chord, strum: 0.025, duration: barDur * 0.5, gain: hasMelody ? 0.3 : 0.6 });
-    } else if (b.onBar) {
-      events.push({ time: t0, midis: [], duration: 0.01, onStart: b.onBar });
+    // Strum on every other beat (beats 1 and 3 of a 4/4 bar), accenting the first.
+    for (let at = 0; at < beats; at += 2) {
+      const first = at === 0;
+      const dur = Math.min(2, beats - at) * beat;
+      if (b.chord?.length) {
+        const chord = [...b.chord].sort((x, y) => x - y);
+        events.push({
+          time: t0 + at * beat,
+          midis: chord,
+          strum: first ? 0.03 : 0.025,
+          duration: dur,
+          gain: hasMelody ? (first ? 0.42 : 0.3) : first ? 0.85 : 0.6,
+          onStart: first ? b.onBar : undefined,
+        });
+      } else if (first && b.onBar) {
+        events.push({ time: t0, midis: [], duration: 0.01, onStart: b.onBar });
+      }
+      if (b.bass !== undefined) {
+        events.push({ time: t0 + at * beat, midis: [b.bass], duration: dur * 0.96, gain: hasMelody ? (first ? 0.5 : 0.4) : first ? 0.7 : 0.55 });
+      }
     }
-    if (b.bass !== undefined) {
-      events.push({ time: t0, midis: [b.bass], duration: barDur * 0.48, gain: hasMelody ? 0.5 : 0.7 });
-      events.push({ time: t0 + barDur / 2, midis: [b.bass], duration: barDur * 0.48, gain: hasMelody ? 0.4 : 0.55 });
-    }
+    const barStart = t0;
     b.melody.forEach((m, k) => {
       events.push({
-        time: t0 + k * step,
+        time: barStart + k * step,
         midis: [m],
         duration: step * 1.7,
         gain: 0.95,
         onStart: b.onNote ? () => b.onNote!(k) : undefined,
       });
     });
-  });
+    t0 += beats * beat;
+  }
   return events;
 }
 

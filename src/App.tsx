@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import { DEFAULT_SETTINGS, FRET_OPTIONS, tuningStrings, usePersistentState, type LabelMode, type Settings } from './state/settings';
-import { tuningNotes } from './theory/tunings';
+import { matchPreset, tuningNotes } from './theory/tunings';
 import type { AccidentalPref } from './theory/notes';
 import { ChordFinder } from './components/ChordFinder';
 import { ProgressionBuilder } from './components/ProgressionBuilder';
@@ -126,7 +126,17 @@ export function App() {
         {tab === 'finder' ? (
           <ChordFinder settings={settings} tuning={tuning} selection={sel} setSelection={setSelection} onAddToProgression={addToProgression} />
         ) : (
-          <ProgressionBuilder settings={settings} tuning={tuning} items={items} setItems={setItems} onOpenInFinder={openInFinder} />
+          <ProgressionBuilder
+            settings={settings}
+            tuning={tuning}
+            items={items}
+            setItems={setItems}
+            onOpenInFinder={openInFinder}
+            onSetTuning={(strings) => {
+              const preset = matchPreset(strings);
+              setSettings((s) => ({ ...s, tuningId: preset ? preset.id : 'custom', customStrings: preset ? s.customStrings : strings }));
+            }}
+          />
         )}
       </main>
 

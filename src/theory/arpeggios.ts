@@ -256,112 +256,176 @@ function relationFamiliarity(rel: number, target: ChordType): number {
  *     + 0.25 · familiarity (common shape; built on the 3rd/5th/7th, the classic substitutes)
  *     − small costs for 5-note shapes (harder to play) and for sharing the chord's root.
  */
-export function suggestArpeggios(target: ChordSpec, opts: SuggestOptions = {}): Arpeggio[] {
-  const pref = opts.pref ?? 'auto';
-  const limit = opts.limit ?? 12;
+/** Everything about the target chord that rating an arpeggio against it needs. */
+interface RateEnv {
+  target: ChordSpec;
+  tPcs: Set<PitchClass>;
+  tDegs: string[];
+  weights: Map<number, number>;
+  totalWeight: number;
+  targetName: string;
+  scales: ScaleContext[];
+  scaleSets: Set<PitchClass>[];
+  pref: AccidentalPref;
+}
+
+function rateEnv(target: ChordSpec, context: ScaleContext | undefined, pref: AccidentalPref): RateEnv {
   const base: ChordSpec = { ...target, bassPc: undefined };
   const tPcs = new Set(chordPcs(base));
-  const tDegs = target.type.degrees;
   const weights = outlineWeights(target.type);
-  const totalWeight = [...weights.values()].reduce((a, b) => a + b, 0);
-  const targetName = chordName(base, pref);
-
-  const scales = chordScales(base, opts.context).filter((s) => !PENTATONIC_LIKE.has(s.scaleId)).slice(0, 3);
+  const scales = chordScales(base, context).filter((s) => !PENTATONIC_LIKE.has(s.scaleId)).slice(0, 3);
   const scaleSets = scales.map((sc) => {
     const set = new Set(scalePcs(sc.rootPc, sc.scaleId));
     for (const p of tPcs) set.add(p);
     return set;
   });
+  return {
+    target,
+    tPcs,
+    tDegs: target.type.degrees,
+    weights,
+    totalWeight: [...weights.values()].reduce((a, b) => a + b, 0),
+    targetName: chordName(base, pref),
+    scales,
+    scaleSets,
+    pref,
+  };
+}
+
+/**
+ * Rate one arpeggio over the target chord.
+ *
+ * fit = 0.35 · consonance  (chord tones and available tensions; avoid notes, notes from a less
+ *                           likely chord-scale and notes outside every chord-scale count less)
+ *     + 0.25 · outline     (how much of the chord's 3rd/7th/characteristic tones it contains)
+ *     + 0.15 · colour      (how many good tensions — 9ths, 11ths, 13ths — it adds)
+ *     + 0.25 · familiarity (common shape; built on the 3rd/5th/7th, the classic substitutes)
+ *     − small costs for 5-note shapes (harder to play) and for sharing the chord's root.
+ *
+ * strict = true is used when *generating* suggestions: arpeggios outside the chord-scales, or
+ * sharing too few notes with the chord, are rejected (null). strict = false rates anything —
+ * used for arpeggios the user types in.
+ */
+function rateArpeggio(env: RateEnv, chord: ChordSpec, prior: number, strict: boolean): Arpeggio | null {
+  const { target, tPcs, tDegs, weights, totalWeight, targetName, scales, scaleSets, pref } = env;
+  const pcs = [...new Set(chordPcs(chord))];
+  const root = chord.rootPc;
+  const scaleIdx = scaleSets.findIndex((set) => pcs.every((p) => set.has(p)));
+  if (strict && scaleIdx < 0) return null;
+  const subset = pcs.every((p) => tPcs.has(p));
+  if (strict && root === target.rootPc && subset) return null; // a reduction of the chord itself
+  if (strict && root === target.rootPc && chord.type.id === target.type.id) return null;
+
+  const labels = pcs.map((pc) => labelInChord(pc - target.rootPc, tDegs));
+  const tensions = labels.filter((_, i) => !tPcs.has(pcs[i]));
+  const avoid = avoidNotes(target.type, tensions);
+  const good = tensions.filter((t) => !avoid.includes(t));
+  const ct = pcs.filter((p) => tPcs.has(p)).length;
+  // An arpeggio should normally share at least two notes with the chord. Exceptions: over a
+  // plain triad one shared note is enough if it adds ≥2 good colours (e.g. Em7 over Am), and
+  // "upper structures" made only of good tensions (e.g. G over Am, D over Cmaj7) are allowed.
+  const upperStructure = ct === 0 && avoid.length === 0 && good.length >= 3;
+  if (strict && ct < 2 && !upperStructure && !(ct === 1 && tDegs.length <= 3 && avoid.length === 0 && good.length >= 2)) return null;
+
+  const outside = pcs.filter((pc) => !tPcs.has(pc) && !scaleSets.some((set) => set.has(pc)));
+  const quality = pcs.map((pc, i) => {
+    if (tPcs.has(pc)) return 1;
+    if (avoid.includes(labels[i])) return 0.35;
+    if (scaleSets[0]?.has(pc)) return 1;
+    return scaleSets.some((set) => set.has(pc)) ? 0.75 : 0.1;
+  });
+  const consonance = quality.reduce((a, b) => a + b, 0) / pcs.length;
+  let outlined = 0;
+  for (const pc of pcs) outlined += weights.get(mod12(pc - target.rootPc)) ?? 0;
+  const outline = totalWeight ? outlined / totalWeight : 0;
+  const colour = Math.min(1, good.filter((g) => !outside.some((pc) => labelInChord(pc - target.rootPc, tDegs) === g)).length / 2);
+  const rel = mod12(root - target.rootPc);
+  const familiarity = Math.min(1, 0.6 * prior + relationFamiliarity(rel, target.type));
+  let fit = 0.35 * consonance + 0.25 * outline + 0.15 * colour + 0.25 * familiarity;
+  if (rel === 0) fit -= 0.05; // same root: more an extension of the chord than a substitute
+  if (pcs.length >= 5) fit -= 0.03;
+
+  const name = chordName(chord, pref);
+  const spelled = spellChord(chord, pref).tones;
+  const nameOf = (pc: number) => {
+    const t = spelled.find((x) => x.pc === pc);
+    return t ? formatNote(t.note) : formatNote(spellRel(target, pc, labelInChord(pc - target.rootPc, tDegs), pref));
+  };
+  let sound = soundName(target, pcs, pref);
+  const parts: string[] = [
+    subset && ct === tPcs.size
+      ? `Same notes as ${targetName}.`
+      : rel === 0
+        ? `Extends ${targetName} from its own root.`
+        : `Built on the ${relationText(rel, target.type)} of ${targetName}.`,
+  ];
+  const dimParent = (target.type.id === 'dim7' || target.type.id === 'dim') && chord.type.id === '7' && tensions.length === 1 && !tPcs.has(root);
+  if (dimParent) {
+    parts.length = 0;
+    parts.push(
+      `${targetName} works like a rootless ${name}♭9 (its notes are the 3rd, 5th, 7th and ♭9 of ${name}). Use the ${name} arpeggio to hear that dominant function.`,
+    );
+    fit += 0.05;
+    sound = `${name}♭9`;
+  } else if (upperStructure) {
+    parts.push(
+      `Upper structure — only colour tones (${labels.map(prettyDegree).join(', ')})${sound && sound !== targetName ? ` → ${sound} sound` : ''}. Sounds modern and open; let the bass/chord supply the root.`,
+    );
+  } else if (good.length) parts.push(`Adds ${good.map(prettyDegree).join(' & ')}${sound && sound !== targetName ? ` → ${sound} sound` : ''}.`);
+  else if (tensions.length) parts.push(`Adds ${tensions.map(prettyDegree).join(', ')} — notes that clash with ${targetName}: a tense, "outside" sound.`);
+  else if (!(subset && ct === tPcs.size)) parts.push(`Only chord tones (${labels.map(prettyDegree).join('-')}) — outlines the chord without stating the root.`);
+  fit = Math.max(0, Math.min(0.99, fit));
+
+  const warnings: string[] = [];
+  if (avoid.length) warnings.push(`Contains the ${avoid.map(prettyDegree).join(', ')} — an "avoid note" over ${targetName}; use it as a passing tone.`);
+  if (outside.length && scales.length)
+    warnings.push(`${outside.map(nameOf).join(', ')} ${outside.length > 1 ? 'are' : 'is'} outside the chord-scale (${scaleLabel(scales[0], pref)}) — a deliberate "outside" sound.`);
+
+  return {
+    id: `sub-${root}-${chord.type.id}-${chord.bassPc ?? ''}`,
+    chord,
+    name,
+    kind: 'substitute',
+    notes: pcs.map((pc, i) => ({ pc, label: labels[i], chordTone: tPcs.has(pc), name: nameOf(pc) })),
+    adds: good,
+    sound,
+    description: parts.join(' '),
+    scaleLabel: scaleIdx >= 0 ? scaleLabel(scales[scaleIdx], pref) : undefined,
+    warning: warnings.length ? warnings.join(' ') : undefined,
+    score: fit * 100,
+    fit,
+  };
+}
+
+/** Substitute arpeggios over a chord, best fit first (see rateArpeggio for the fit formula). */
+export function suggestArpeggios(target: ChordSpec, opts: SuggestOptions = {}): Arpeggio[] {
+  const pref = opts.pref ?? 'auto';
+  const limit = opts.limit ?? 12;
+  const env = rateEnv(target, opts.context, pref);
   const roots = new Set<number>();
-  for (const sc of scales) for (const p of scalePcs(sc.rootPc, sc.scaleId)) roots.add(p);
+  for (const sc of env.scales) for (const p of scalePcs(sc.rootPc, sc.scaleId)) roots.add(p);
   const cands = new Map<string, Arpeggio>();
 
   for (const root of roots) {
     for (const v of VOCAB) {
       const type = chordType(v.id);
-      const pcs = type.degreeInfo.map((d) => mod12(root + d.semi));
-      const scaleIdx = scaleSets.findIndex((set) => pcs.every((p) => set.has(p)));
-      if (scaleIdx < 0) continue;
-      const subset = pcs.every((p) => tPcs.has(p));
-      if (root === target.rootPc && subset) continue; // a reduction of the chord itself
-      if (root === target.rootPc && type.id === target.type.id) continue;
-
-      const labels = pcs.map((pc) => labelInChord(pc - target.rootPc, tDegs));
-      const tensions = labels.filter((_, i) => !tPcs.has(pcs[i]));
-      const avoid = avoidNotes(target.type, tensions);
-      const good = tensions.filter((t) => !avoid.includes(t));
-      const ct = pcs.filter((p) => tPcs.has(p)).length;
-      // An arpeggio should normally share at least two notes with the chord. Exceptions: over a
-      // plain triad one shared note is enough if it adds ≥2 good colours (e.g. Em7 over Am), and
-      // "upper structures" made only of good tensions (e.g. G over Am, D over Cmaj7) are allowed.
-      const upperStructure = ct === 0 && avoid.length === 0 && good.length >= 3;
-      if (ct < 2 && !upperStructure && !(ct === 1 && tDegs.length <= 3 && avoid.length === 0 && good.length >= 2)) continue;
-
-      const quality = pcs.map((pc, i) => {
-        if (tPcs.has(pc)) return 1;
-        if (avoid.includes(labels[i])) return 0.35;
-        return scaleSets[0]?.has(pc) ? 1 : 0.75;
-      });
-      const consonance = quality.reduce((a, b) => a + b, 0) / pcs.length;
-      let outlined = 0;
-      for (const pc of pcs) outlined += weights.get(mod12(pc - target.rootPc)) ?? 0;
-      const outline = totalWeight ? outlined / totalWeight : 0;
-      const colour = Math.min(1, good.length / 2);
       const rel = mod12(root - target.rootPc);
-      const familiarity = Math.min(1, 0.6 * v.prior + relationFamiliarity(rel, target.type));
-      let fit = 0.35 * consonance + 0.25 * outline + 0.15 * colour + 0.25 * familiarity;
-      if (rel === 0) fit -= 0.05; // same root: more an extension of the chord than a substitute
-      if (pcs.length >= 5) fit -= 0.03;
-
       // Spell the root relative to the chord (D♯m7 over B), but never as B♯/E♯/C♭/F♭ or a double accidental.
-      const relSpelling = spellRel(target, root, labelInChord(rel, tDegs), pref);
+      const relSpelling = spellRel(target, root, labelInChord(rel, env.tDegs), pref);
       const awkward =
-        Math.abs(relSpelling.acc) > 1 || (relSpelling.acc === 1 && (relSpelling.letter === 2 || relSpelling.letter === 6)) || (relSpelling.acc === -1 && (relSpelling.letter === 0 || relSpelling.letter === 3));
-      const chord: ChordSpec = { rootPc: root, type, rootSpelling: awkward ? undefined : relSpelling };
-      const name = chordName(chord, pref);
-      const ownSpelling = spellChord(chord, pref).tones.map((t) => t.note);
-      let sound = soundName(target, pcs, pref);
-      const parts: string[] = [rel === 0 ? `Extends ${targetName} from its own root.` : `Built on the ${relationText(rel, target.type)} of ${targetName}.`];
-      const dimParent =
-        (target.type.id === 'dim7' || target.type.id === 'dim') && type.id === '7' && tensions.length === 1 && !tPcs.has(root);
-      if (dimParent) {
-        parts.length = 0;
-        parts.push(
-          `${targetName} works like a rootless ${name}♭9 (its notes are the 3rd, 5th, 7th and ♭9 of ${name}). Use the ${name} arpeggio to hear that dominant function.`,
-        );
-        fit += 0.05;
-        sound = `${name}♭9`;
-      } else if (upperStructure) {
-        parts.push(
-          `Upper structure — only colour tones (${labels.map(prettyDegree).join(', ')})${sound && sound !== targetName ? ` → ${sound} sound` : ''}. Sounds modern and open; let the bass/chord supply the root.`,
-        );
-      } else if (good.length) parts.push(`Adds ${good.map(prettyDegree).join(' & ')}${sound && sound !== targetName ? ` → ${sound} sound` : ''}.`);
-      else parts.push(`Only chord tones (${labels.map(prettyDegree).join('-')}) — outlines the chord without stating the root.`);
-      fit = Math.max(0, Math.min(0.99, fit));
-
-      const id = `sub-${root}-${type.id}`;
-      const arp: Arpeggio = {
-        id,
-        chord,
-        name,
-        kind: 'substitute',
-        notes: pcs.map((pc, i) => ({ pc, label: labels[i], chordTone: tPcs.has(pc), name: formatNote(ownSpelling[i]) })),
-        adds: good,
-        sound,
-        description: parts.join(' '),
-        scaleLabel: scaleLabel(scales[scaleIdx], pref),
-        warning: avoid.length ? `Contains the ${avoid.map(prettyDegree).join(', ')} — an "avoid note" over ${targetName}; use it as a passing tone.` : undefined,
-        score: fit * 100,
-        fit,
-      };
-      const prev = cands.get(id);
-      if (!prev || prev.fit < fit) cands.set(id, arp);
+        Math.abs(relSpelling.acc) > 1 ||
+        (relSpelling.acc === 1 && (relSpelling.letter === 2 || relSpelling.letter === 6)) ||
+        (relSpelling.acc === -1 && (relSpelling.letter === 0 || relSpelling.letter === 3));
+      const arp = rateArpeggio(env, { rootPc: root, type, rootSpelling: awkward ? undefined : relSpelling }, v.prior, true);
+      if (!arp) continue;
+      const prev = cands.get(arp.id);
+      if (!prev || prev.fit < arp.fit) cands.set(arp.id, arp);
     }
   }
 
   // Arpeggios with identical notes (e.g. Em7 = G6, the four inversions of a dim7) are merged,
   // keeping the most common chord name; arpeggios with exactly the target chord's notes are dropped.
-  const targetMask = maskOf(tPcs);
+  const targetMask = maskOf(env.tPcs);
   const byNotes = new Map<number, Arpeggio>();
   for (const a of cands.values()) {
     const m = maskOf(a.notes.map((n) => n.pc));
@@ -376,6 +440,21 @@ export function suggestArpeggios(target: ChordSpec, opts: SuggestOptions = {}): 
     byNotes.set(m, { ...better, fit, score: fit * 100 });
   }
   return [...byNotes.values()].sort((a, b) => b.fit - a.fit).slice(0, limit);
+}
+
+/**
+ * Analyse any arpeggio (e.g. one the user typed in) over a chord with the same rating as the
+ * suggestions: fit %, the colour tones it adds, the resulting sound, avoid and "outside" notes.
+ */
+export function analyzeArpeggio(target: ChordSpec, arp: ChordSpec, opts: { pref?: AccidentalPref; context?: ScaleContext } = {}): Arpeggio {
+  const env = rateEnv(target, opts.context, opts.pref ?? 'auto');
+  const prior = VOCAB.find((v) => v.id === arp.type.id)?.prior ?? Math.min(0.5, arp.type.prior);
+  return { ...rateArpeggio(env, arp, prior, false)!, kind: 'substitute' };
+}
+
+/** Same pitch-class set as the arpeggio? (used to find a typed arpeggio among the suggestions) */
+export function sameNotes(a: ChordSpec, b: ChordSpec): boolean {
+  return a.rootPc === b.rootPc && maskOf(chordPcs(a)) === maskOf(chordPcs(b));
 }
 
 function maskOf(pcs: Iterable<PitchClass>): number {

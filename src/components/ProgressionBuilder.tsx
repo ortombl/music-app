@@ -1,5 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { exactArpeggios, scaleLabel, suggestArpeggios, type Arpeggio } from '../theory/arpeggios';
+import { analyzeArpeggio, exactArpeggios, sameNotes, scaleLabel, suggestArpeggios } from '../theory/arpeggios';
+import { parseArpeggioInput } from '../theory/arpInput';
+import {
+  beatsText,
+  exportArrangementText,
+  parseArrangementText,
+  slotAt,
+  toAscii,
+  type ArrangementDoc,
+  type Slot,
+} from '../theory/arrangement';
+import { findTuning, tuningNotes, tuningNotesWithOctave } from '../theory/tunings';
 import { CHORD_TYPES, chordName, chordPcs, chordTypeLabel, spellChord } from '../theory/chords';
 import { arpeggioRun, positionForMidi, rootPositions, type FretWindow } from '../theory/fretboard';
 import { analyzeChord, detectKey, tonicChord, type ChordAnalysis, type KeyCandidate } from '../theory/key';
@@ -9,14 +20,14 @@ import { formatNote, mod12, pcName } from '../theory/notes';
 import { parseChordSymbol, parseProgression, type ParsedChord } from '../theory/parse';
 import { chooseScaleRoot, scaleType, spellScale } from '../theory/scales';
 import { generateVoicings, type Voicing } from '../theory/voicings';
-import type { Settings } from '../state/settings';
+import { usePersistentState, type Settings } from '../state/settings';
 import { arrange, bassNote, type Bar } from '../audio/arrange';
 import { usePlayer } from '../audio/usePlayer';
 import { lineFromRoot, pitchPool, scaleLineOverChords, voiceLedLines } from '../theory/lines';
 import { scalePcs } from '../theory/scales';
 import type { ScaleFit } from '../theory/scaleFit';
-import { ChordDiagram } from './ChordDiagram';
-import { LabelToggle, NoteMap, type MapLabels, type PcInfo } from './NoteMap';
+import { LabelToggle, type MapLabels } from './NoteMap';
+import { ArrangementCard, type ResolvedArp } from './ArrangementCard';
 import { PositionPicker } from './PositionPicker';
 import { Legend } from './Legend';
 import { ArpeggioExplorer } from './ArpeggioExplorer';
@@ -28,6 +39,8 @@ interface Props {
   items: string[];
   setItems: (fn: (prev: string[]) => string[]) => void;
   onOpenInFinder: (frets: (number | null)[]) => void;
+  /** Change the tuning (used when importing a file that specifies one). */
+  onSetTuning?: (strings: number[]) => void;
 }
 
 export const PRESETS: { name: string; chords: string }[] = [
@@ -48,13 +61,7 @@ export const PRESETS: { name: string; chords: string }[] = [
 const FUNC_CLASS: Record<string, string> = { T: 'func-t', S: 'func-s', D: 'func-d', '': 'func-x' };
 const COMMON_TYPES = ['maj', 'm', '7', 'maj7', 'm7', 'm7b5', 'dim', 'dim7', 'aug', 'sus2', 'sus4', '7sus4', '5', '6', 'm6', 'add9', '9', 'maj9', 'm9', '7b9', '7#9', '11', 'm11', '13'];
 
-function arpToInfo(a: Arpeggio): Map<number, PcInfo> {
-  const m = new Map<number, PcInfo>();
-  for (const n of a.notes) m.set(n.pc, { degree: n.label, name: n.name });
-  return m;
-}
-
-export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenInFinder }: Props) {
+export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenInFinder, onSetTuning }: Props) {
   const pref = settings.accidentals;
   const [text, setText] = useState('');
   const [errors, setErrors] = useState<string[]>([]);
@@ -64,10 +71,13 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
   const [qAdd, setQAdd] = useState('');
   const [qOmit, setQOmit] = useState('');
   const [keyIdx, setKeyIdx] = useState(0);
-  const [win, setWin] = useState<FretWindow | null>(null);
+  // The arrangement (per-chord arpeggio, position, length) and its shared settings are remembered.
+  const [win, setWin] = usePersistentState<FretWindow | null>('arrangement-position', null);
+  const [slots, setSlots] = usePersistentState<Slot[]>('arrangement-slots', []);
+  const [ioStatus, setIoStatus] = useState<{ ok: boolean; text: string } | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const [labels, setLabels] = useState<MapLabels>(settings.labelMode === 'intervals' ? 'intervals' : 'notes');
-  const [arpChoice, setArpChoice] = useState<Record<number, number>>({});
-  const [tempo, setTempo] = useState(90);
+  const [tempo, setTempo] = usePersistentState('arrangement-tempo', 90);
   const [backingOn, setBackingOn] = useState(true);
   const [loop, setLoop] = useState(false);
   const loopRef = useRef(loop);
@@ -78,11 +88,19 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
   const [scaleActive, setScaleActive] = useState<{ scaleId: string; string: number; fret: number } | null>(null);
   const [detail, setDetail] = useState<number | null>(null);
 
-  const chords = useMemo(() => items.map((s) => parseChordSymbol(s)).filter((c): c is ParsedChord => c !== null), [items]);
+  const parsedItems = useMemo(() => items.map((s) => parseChordSymbol(s)), [items]);
+  const chords = useMemo(() => parsedItems.filter((c): c is ParsedChord => c !== null), [parsedItems]);
+  // Items that no longer parse (e.g. edited storage) are dropped together with their slots, so
+  // slots stay aligned with chords.
+  useEffect(() => {
+    if (parsedItems.every(Boolean)) return;
+    const keep = parsedItems.map(Boolean);
+    setItems((prev) => prev.filter((_, i) => keep[i]));
+    setSlots((prev) => prev.filter((_, i) => keep[i] !== false));
+  }, [parsedItems, setItems, setSlots]);
   const itemsKey = items.join(' ');
   useEffect(() => {
     setKeyIdx(0);
-    setArpChoice({});
   }, [itemsKey]);
 
   const keys = useMemo(() => detectKey(chords, pref), [chords, pref]);
@@ -122,20 +140,55 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
   const addQuick = () => {
     if (quickChord) setItems((prev) => [...prev, quickChord.display]);
   };
-  const move = (i: number, d: number) =>
-    setItems((prev) => {
-      const j = i + d;
-      if (j < 0 || j >= prev.length) return prev;
-      const next = [...prev];
+  // Reordering / removing chords keeps each chord's arpeggio settings with it.
+  const move = (i: number, d: number) => {
+    const j = i + d;
+    if (j < 0 || j >= items.length) return;
+    const swap = <T,>(arr: T[], fill: T) => {
+      const next = [...arr];
+      while (next.length <= Math.max(i, j)) next.push(fill);
       [next[i], next[j]] = [next[j], next[i]];
       return next;
-    });
-  const remove = (i: number) => setItems((prev) => prev.filter((_, j) => j !== i));
-
-  const arpFor = (i: number): Arpeggio => {
-    const choice = arpChoice[i] ?? -1;
-    return choice >= 0 && subs[i][choice] ? subs[i][choice] : exacts[i];
+    };
+    setItems((prev) => swap(prev, ''));
+    setSlots((prev) => swap(prev, slotAt(prev, prev.length)));
   };
+  const remove = (i: number) => {
+    setItems((prev) => prev.filter((_, j) => j !== i));
+    setSlots((prev) => prev.filter((_, j) => j !== i));
+  };
+  const updateSlot = (i: number, patch: Partial<Slot>) =>
+    setSlots((prev) => {
+      const next = [...prev];
+      while (next.length <= i) next.push(slotAt(next, next.length));
+      next[i] = { ...slotAt(prev, i), ...patch };
+      return next;
+    });
+
+  /** Each chord's arpeggio: its own, one of the suggestions, or one the user typed in. */
+  const resolved: ResolvedArp[] = useMemo(
+    () =>
+      chords.map((c, i) => {
+        const slot = slotAt(slots, i);
+        if (!slot.arp) return { arp: exacts[i], kind: 'own' };
+        const r = parseArpeggioInput(slot.arp, pref);
+        if ('error' in r) return { arp: exacts[i], kind: 'own', error: r.error };
+        const idx = subs[i].findIndex((s) => sameNotes(s.chord, r.chord));
+        if (idx >= 0) return { arp: subs[i][idx], kind: 'sub', subIndex: idx, recognisedFrom: r.recognisedFrom };
+        return { arp: analyzeArpeggio(c, r.chord, { pref, context: analyses[i]?.scale }), kind: 'custom', recognisedFrom: r.recognisedFrom };
+      }),
+    [chords, slots, subs, exacts, analyses, pref],
+  );
+  const arpFor = (i: number) => resolved[i].arp;
+  /** The fret window a chord's arpeggio is played in (null = whole neck). */
+  const winFor = (i: number): FretWindow | null => {
+    const pos = slotAt(slots, i).pos;
+    if (pos === 'global') return win;
+    if (pos === 'neck') return null;
+    const end = Math.min(pos.end, settings.frets);
+    return { start: Math.min(pos.start, Math.max(0, end - 4)), end };
+  };
+  const beatsFor = (i: number) => slotAt(slots, i).beats;
 
   // ---- Playback -------------------------------------------------------------------------------
   const backingVoicing = (i: number) => voicings[i]?.[0]?.midis ?? chordPcs(chords[i]).map((pc) => 48 + pc);
@@ -148,7 +201,7 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
   const run = (id: string, bars: () => Bar[]) =>
     player.toggle(id, () => arrange(bars(), { bpm: tempo }), { loop: () => loopRef.current, onDone: clearHighlights });
   const showNote = (i: number, midi: number) => {
-    const pos = positionForMidi(tuning, settings.frets, midi, win);
+    const pos = positionForMidi(tuning, settings.frets, midi, winFor(i));
     setActiveChord(i);
     setActiveNote(pos ? { chord: i, string: pos.string, fret: pos.fret } : null);
   };
@@ -156,32 +209,35 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
 
   /** The chords alone, one bar each. */
   const playChords = () =>
-    run('chords', () => chords.map((_, i) => ({ ...withBacking(i, true), melody: [], onBar: () => setActiveChord(i) })));
+    run('chords', () => chords.map((_, i) => ({ ...withBacking(i, true), beats: beatsFor(i), melody: [], onBar: () => setActiveChord(i) })));
 
   /** Every chord's chosen arpeggio as one voice-led line through the changes (optionally over the chords). */
   const playArps = () =>
     run('arps', () => {
-      const pools = chords.map((_, i) => pitchPool(tuning, settings.frets, arpFor(i).notes.map((n) => n.pc), win));
+      const pools = chords.map((_, i) => pitchPool(tuning, settings.frets, arpFor(i).notes.map((n) => n.pc), winFor(i)));
       const lines = voiceLedLines(
         pools,
         chords.map((_, i) => arpFor(i).chord.rootPc),
-        8,
+        chords.map((_, i) => beatsFor(i) * 2),
       );
       return chords.map((_, i) => ({
         ...withBacking(i, backingOn),
+        beats: beatsFor(i),
         melody: lines[i],
         onBar: () => setActiveChord(i),
         onNote: (k: number) => showNote(i, lines[i][k]),
       }));
     });
 
-  /** One chord's arpeggio, alone or over its chord (two bars). */
+  /** One chord's arpeggio, alone or over its chord (its length, twice — at least two bars). */
   const playCardArp = (i: number, over: boolean) =>
     run(`card-${i}-${over ? 'over' : 'solo'}`, () => {
       const a = arpFor(i);
-      const line = lineFromRoot(pitchPool(tuning, settings.frets, a.notes.map((n) => n.pc), win), a.chord.rootPc, 16);
-      return [line.slice(0, 8), line.slice(8)].map((notes) => ({
+      const beats = Math.max(4, beatsFor(i));
+      const line = lineFromRoot(pitchPool(tuning, settings.frets, a.notes.map((n) => n.pc), winFor(i)), a.chord.rootPc, beats * 4);
+      return [line.slice(0, beats * 2), line.slice(beats * 2)].map((notes) => ({
         ...withBacking(i, over),
+        beats,
         melody: notes,
         onBar: () => setActiveChord(i),
         onNote: (k: number) => showNote(i, notes[k]),
@@ -210,16 +266,137 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
         pool,
         chords.map((c) => new Set(chordPcs(c))),
         fit.ctx.rootPc,
-        8,
+        chords.map((_, i) => beatsFor(i) * 2),
       );
       return chords.map((_, i) => ({
         ...withBacking(i, true),
+        beats: beatsFor(i),
         melody: lines[i],
         onBar: () => setActiveChord(i),
         onNote: (k: number) => mark(lines[i][k]),
       }));
     });
   const label = (id: string, text: string) => (player.playing === id ? '■ Stop' : text);
+
+  // ---- Export / import ------------------------------------------------------------------------
+  const positionLabel = (i: number) => {
+    const pos = slotAt(slots, i).pos;
+    if (pos === 'global') return win ? `frets ${win.start}–${win.end} (all)` : 'whole neck (all)';
+    if (pos === 'neck') return 'whole neck';
+    return `frets ${pos.start}–${pos.end}`;
+  };
+  const buildExport = () => {
+    const doc: ArrangementDoc = {
+      chords: chords.map((c) => c.display),
+      slots: chords.map((_, i) => slotAt(slots, i)),
+      tempo,
+      position: win,
+      tuning,
+    };
+    const preset = findTuning(settings.tuningId);
+    return exportArrangementText(doc, {
+      key: key ? `${key.name} · tonic chord ${tonic ? chordName(tonic, pref) : '—'}` : '—',
+      tuning: `${settings.tuningId === 'custom' || !preset ? 'Custom' : preset.name} (${tuningNotes(tuning)} · ${tuningNotesWithOctave(tuning)})`,
+      tempo,
+      position: win ? `frets ${win.start}–${win.end}` : 'whole neck',
+      date: new Date().toLocaleString(),
+      rows: chords.map((c, i) => {
+        const r = resolved[i];
+        return {
+          chord: c.display,
+          roman: analyses[i]?.roman ?? '',
+          arpeggio: r.kind === 'own' ? `${r.arp.name} (chord)` : r.kind === 'custom' ? `${r.arp.name} (own)` : r.arp.name,
+          notes: r.arp.notes.map((n) => n.name).join(' '),
+          fit: r.kind === 'own' ? '—' : `${Math.round(r.arp.fit * 100)}%`,
+          sound: r.arp.sound && r.arp.sound !== c.display ? r.arp.sound : '',
+          position: positionLabel(i),
+          length: beatsText(beatsFor(i)),
+        };
+      }),
+    });
+  };
+  const exportFile = () => {
+    const text = buildExport();
+    const name = `fretboard-lab ${chords.map((c) => toAscii(c.display)).join(' ')}`.replace(/[^A-Za-z0-9#()+,-]+/g, '_').slice(0, 80);
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${name}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+    setIoStatus({ ok: true, text: `Exported ${chords.length} chords with their arpeggios to ${name}.txt.` });
+  };
+  const copyText = async () => {
+    try {
+      await navigator.clipboard.writeText(buildExport());
+      setIoStatus({ ok: true, text: 'Copied to the clipboard — paste it into your notes.' });
+    } catch {
+      setIoStatus({ ok: false, text: 'The browser did not allow copying here; use Export instead.' });
+    }
+  };
+  const importText = (text: string, fileName: string) => {
+    const { doc, errors } = parseArrangementText(text);
+    const problems = [...errors];
+    const newItems: string[] = [];
+    const newSlots: Slot[] = [];
+    doc.chords.forEach((c, i) => {
+      if (!parseChordSymbol(c)) {
+        problems.push(`chord "${c}" not recognised — skipped`);
+        return;
+      }
+      let slot = doc.slots[i];
+      if (slot.arp && 'error' in parseArpeggioInput(slot.arp)) {
+        problems.push(`arpeggio "${slot.arp}" for ${c} not recognised — using the chord's own`);
+        slot = { ...slot, arp: null };
+      }
+      newItems.push(c);
+      newSlots.push(slot);
+    });
+    if (!newItems.length) {
+      setIoStatus({ ok: false, text: `No chords found in ${fileName}.${problems.length ? ` ${problems.join('; ')}.` : ''}` });
+      return;
+    }
+    player.stop();
+    setItems(() => newItems);
+    setSlots(newSlots);
+    if (doc.tempo) setTempo(doc.tempo);
+    if (doc.position !== undefined) setWin(doc.position);
+    let tuningNote = '';
+    if (doc.tuning && onSetTuning && doc.tuning.join(',') !== tuning.join(',')) {
+      onSetTuning(doc.tuning);
+      tuningNote = ` Tuning set to ${tuningNotes(doc.tuning)}.`;
+    }
+    setIoStatus({
+      ok: problems.length === 0,
+      text: `Imported ${newItems.length} chords from ${fileName}.${tuningNote}${problems.length ? ` Warnings: ${problems.join('; ')}.` : ''}`,
+    });
+  };
+  const onFile = (file: File | undefined) => {
+    if (!file) return;
+    file
+      .text()
+      .then((t) => importText(t, file.name))
+      .catch(() => setIoStatus({ ok: false, text: `Could not read ${file.name}.` }));
+  };
+  const importButton = (
+    <>
+      <button type="button" className="btn" onClick={() => fileRef.current?.click()} title="Load a progression + arpeggios saved with Export">
+        ⬆ Import .txt
+      </button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".txt,text/plain"
+        hidden
+        onChange={(e) => {
+          onFile(e.target.files?.[0]);
+          e.target.value = '';
+        }}
+      />
+    </>
+  );
 
   const tonic = key ? tonicChord(key, chords) : null;
   const relative = key
@@ -262,7 +439,10 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
             value=""
             onChange={(e) => {
               const p = PRESETS.find((x) => x.name === e.target.value);
-              if (p) setItems(() => p.chords.split(' '));
+              if (p) {
+                setItems(() => p.chords.split(' '));
+                setSlots([]);
+              }
             }}
           >
             <option value="">Load an example…</option>
@@ -272,6 +452,7 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
               </option>
             ))}
           </select>
+          {importButton}
         </form>
         {errors.length > 0 && <p className="warning">Not recognised: {errors.join(', ')}</p>}
         <div className="quick-add row gap wrap">
@@ -352,7 +533,14 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
               </li>
             ))}
             <li className="prog-chip-clear">
-              <button type="button" className="btn small" onClick={() => setItems(() => [])}>
+              <button
+                type="button"
+                className="btn small"
+                onClick={() => {
+                  setItems(() => []);
+                  setSlots([]);
+                }}
+              >
                 Clear all
               </button>
             </li>
@@ -555,70 +743,53 @@ export function ProgressionBuilder({ settings, tuning, items, setItems, onOpenIn
             The arpeggio line moves to the nearest note at every chord change (voice leading), eight notes per chord, inside the chosen position.
           </p>
           <div className="prog-grid">
-            {chords.map((c, i) => {
-              const a = arpFor(i);
-              const an = analyses[i];
-              return (
-                <article key={`${i}-${c.input}`} className={`pc-card${activeChord === i ? ' playing' : ''}`}>
-                  <header>
-                    <span className="pc-idx">{i + 1}</span>
-                    <span className="pc-title">{c.display}</span>
-                    <span className="pc-roman">{an.roman}</span>
-                    <span className={`func-badge ${FUNC_CLASS[an.func]}`}>{an.funcLabel}</span>
-                    <span className="pc-play">
-                      <button type="button" className="btn small" onClick={() => playCardArp(i, false)} title={`Play the ${a.name} arpeggio`}>
-                        {label(`card-${i}-solo`, '▶')}
-                      </button>
-                      <button type="button" className="btn small" onClick={() => playCardArp(i, true)} title={`Play the ${a.name} arpeggio over ${c.display}`}>
-                        {label(`card-${i}-over`, '▶ over chord')}
-                      </button>
-                    </span>
-                  </header>
-                  <select
-                    aria-label={`Arpeggio for ${c.display}`}
-                    value={arpChoice[i] ?? -1}
-                    onChange={(e) => setArpChoice((prev) => ({ ...prev, [i]: Number(e.target.value) }))}
-                  >
-                    <option value={-1}>
-                      {exacts[i].name} arpeggio ({exacts[i].notes.map((n) => n.name).join(' ')})
-                    </option>
-                    {subs[i].map((s, j) => (
-                      <option key={s.id} value={j}>
-                        {Math.round(s.fit * 100)}% · {s.name} over {c.display}
-                        {s.sound && s.sound !== c.display ? ` → ${s.sound}` : ''}
-                      </option>
-                    ))}
-                  </select>
-                  <NoteMap
-                    tuning={tuning}
-                    settings={settings}
-                    info={arpToInfo(a)}
-                    win={win}
-                    labels={labels}
-                    compact
-                    ringPc={a.chord.rootPc}
-                    active={activeNote && activeNote.chord === i ? activeNote : null}
-                    ariaLabel={`${a.name} arpeggio for chord ${i + 1}`}
-                  />
-                  <div className="pc-voicings">
-                    {voicings[i].map((v) => (
-                      <ChordDiagram
-                        key={v.frets.join(',')}
-                        frets={v.frets}
-                        tuning={tuning}
-                        chord={c}
-                        onClick={() => onOpenInFinder(v.frets)}
-                        title="Open this voicing in the Chord finder"
-                      />
-                    ))}
-                    {voicings[i].length === 0 && <span className="muted small">No comfortable voicing in this tuning.</span>}
-                  </div>
-                  {an.note && <p className="muted small">{an.note}</p>}
-                </article>
-              );
-            })}
+            {chords.map((c, i) => (
+              <ArrangementCard
+                key={`${i}-${c.input}`}
+                index={i}
+                chord={c}
+                analysis={analyses[i]}
+                slot={slotAt(slots, i)}
+                resolved={resolved[i]}
+                exact={exacts[i]}
+                subs={subs[i]}
+                voicings={voicings[i]}
+                tuning={tuning}
+                settings={settings}
+                labels={labels}
+                globalWin={win}
+                win={winFor(i)}
+                active={activeNote && activeNote.chord === i ? activeNote : null}
+                playing={activeChord === i}
+                soloLabel={label(`card-${i}-solo`, '▶')}
+                overLabel={label(`card-${i}-over`, '▶ over chord')}
+                onPlaySolo={() => playCardArp(i, false)}
+                onPlayOver={() => playCardArp(i, true)}
+                onChange={(patch) => updateSlot(i, patch)}
+                onOpenInFinder={onOpenInFinder}
+              />
+            ))}
           </div>
           <Legend />
+          <div className="io-bar">
+            <div>
+              <b>Save your arrangement</b>
+              <p className="muted small">
+                Export the progression with every chord's arpeggio, position and length as a text file (readable, and editable) — Import loads it back. Your
+                work is also kept automatically in this browser.
+              </p>
+            </div>
+            <div className="row gap wrap">
+              <button type="button" className="btn primary" onClick={exportFile}>
+                ⬇ Export .txt
+              </button>
+              <button type="button" className="btn" onClick={copyText}>
+                Copy as text
+              </button>
+              {importButton}
+            </div>
+            {ioStatus && <p className={ioStatus.ok ? 'io-ok small' : 'warning small'}>{ioStatus.text}</p>}
+          </div>
         </section>
       )}
     </>
