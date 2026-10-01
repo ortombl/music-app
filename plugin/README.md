@@ -21,7 +21,9 @@ Formats: **VST3** (Windows, macOS, Linux), **AU** (macOS) and a **standalone app
   - **Right-click** to set the position: this chord in frets 5–9, the whole neck, or the same
     position for all chords.
 - **Arpeggios for every chord** — the chord's own arpeggio, **20 suggestions ranked by fit %**
-  (the same list and percentages as the web app: Fmaj9 over Dm7 → Dm11, A♭dim7 over G7 → G7♭9…),
+  (the same list and percentages as the web app's arpeggio explorer for a single chord: Fmaj9 over
+  Dm7 → Dm11, A♭dim7 over G7 → G7♭9…; the plugin does not detect the key, so inside a progression
+  the web app — which also weighs the key — can order a few of them differently),
   a *Quick pick* row with the best ones, or **type your own** — a chord symbol (`Bbmaj7`, `F#m7b5`,
   `Eb(add#11,no3)`) or just notes (`E G B D`).
 - **Per-chord position and length** (1 beat … 4 bars), and a shared position for all chords.
