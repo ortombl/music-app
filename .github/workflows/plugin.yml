@@ -1,0 +1,154 @@
+name: Plugin
+
+# Builds the Fretboard Lab Arp VST3 / AU / standalone plugin for Windows, macOS and Linux, runs its
+# tests and pluginval, and attaches the plugin files to the run (Actions → this run → Artifacts).
+on:
+  push:
+    paths:
+      - 'plugin/**'
+      - 'scripts/plugin-*.ts'
+      - 'src/theory/**'
+      - '.github/workflows/plugin.yml'
+  pull_request:
+    paths:
+      - 'plugin/**'
+      - 'scripts/plugin-*.ts'
+      - 'src/theory/**'
+      - '.github/workflows/plugin.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The plugin's chord dictionary and its test vectors are generated from the web app's engine:
+  # make sure they are up to date.
+  tables:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run gen:plugin
+      - name: Generated files are up to date
+        run: git diff --exit-code -- plugin/Source/core/GeneratedTables.inc plugin/tests/vectors.txt
+
+  build:
+    name: build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+          - name: macOS
+            os: macos-14
+          - name: Linux
+            os: ubuntu-22.04
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libfreetype6-dev libfontconfig1-dev libx11-dev libxcomposite-dev \
+            libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev libgl1-mesa-dev xvfb ninja-build
+
+      - name: Configure
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            cmake -S plugin -B plugin/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            cmake -S plugin -B plugin/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          else
+            cmake -S plugin -B plugin/build
+          fi
+
+      - name: Build
+        run: cmake --build plugin/build --config Release --parallel 4
+
+      - name: Core tests (C++ port vs. the web app)
+        run: ctest --test-dir plugin/build -C Release --output-on-failure
+
+      - name: Engine tests + editor snapshots
+        shell: bash
+        run: |
+          mkdir -p snapshots
+          exe=plugin/build/fl_engine_tests_artefacts/Release/fl_engine_tests
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a -s "-screen 0 1600x1000x24" "$exe" snapshots
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            "$exe.exe" snapshots
+          else
+            "$exe" snapshots
+          fi
+
+      - name: Ad-hoc sign (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          art=plugin/build/FretboardLabArp_artefacts/Release
+          for b in "$art/VST3/Fretboard Lab Arp.vst3" "$art/AU/Fretboard Lab Arp.component" "$art/Standalone/Fretboard Lab Arp.app"; do
+            codesign --force --deep --sign - "$b"
+          done
+
+      - name: pluginval
+        shell: bash
+        run: |
+          base=https://github.com/Tracktion/pluginval/releases/download/v1.0.4
+          vst3="plugin/build/FretboardLabArp_artefacts/Release/VST3/Fretboard Lab Arp.vst3"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            curl -sSL -o pv.zip $base/pluginval_Linux.zip && unzip -q pv.zip
+            xvfb-run -a -s "-screen 0 1600x1000x24" ./pluginval --strictness-level 10 --validate-in-process --validate "$vst3"
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            curl -sSL -o pv.zip $base/pluginval_Windows.zip && unzip -q pv.zip
+            ./pluginval.exe --strictness-level 10 --validate-in-process --validate "$vst3"
+          else
+            curl -sSL -o pv.zip $base/pluginval_macOS.zip && unzip -q pv.zip
+            ./pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --validate-in-process --validate "$vst3"
+            ./pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --validate-in-process \
+              --validate "plugin/build/FretboardLabArp_artefacts/Release/AU/Fretboard Lab Arp.component"
+          fi
+
+      # Zipped here (not by upload-artifact) so macOS bundles and Linux binaries keep their permissions.
+      - name: Package
+        shell: bash
+        run: |
+          art=plugin/build/FretboardLabArp_artefacts/Release
+          pkg=dist/FretboardLabArp
+          mkdir -p "$pkg"
+          cp -R "$art/VST3/Fretboard Lab Arp.vst3" "$pkg/"
+          cp plugin/README.md "$pkg/README.md"
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            cp -R "$art/AU/Fretboard Lab Arp.component" "$pkg/"
+            cp -R "$art/Standalone/Fretboard Lab Arp.app" "$pkg/"
+            ditto -c -k --sequesterRsrc --keepParent "$pkg" "dist/FretboardLabArp-${{ matrix.name }}.zip"
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            cp "$art/Standalone/Fretboard Lab Arp.exe" "$pkg/"
+            (cd dist && 7z a -tzip "FretboardLabArp-${{ matrix.name }}.zip" FretboardLabArp > /dev/null)
+          else
+            cp "$art/Standalone/Fretboard Lab Arp" "$pkg/"
+            (cd dist && zip -r -y -q "FretboardLabArp-${{ matrix.name }}.zip" FretboardLabArp)
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FretboardLabArp-${{ matrix.name }}
+          path: dist/FretboardLabArp-${{ matrix.name }}.zip
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: editor-snapshots-${{ matrix.name }}
+          path: snapshots
+          if-no-files-found: ignore

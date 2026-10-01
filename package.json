@@ -9,7 +9,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "gen:plugin": "vitest run --config scripts/vitest.gen.config.ts"
   },
   "dependencies": {
     "react": "^19.3.0",

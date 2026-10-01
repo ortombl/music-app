@@ -58,6 +58,16 @@ standard, drop, open, 7-string, 8-string, baritone, bass, or your own custom tun
 - Note names / notes + octave / intervals / fret numbers labels, ♯/♭ preference (with correct
   enharmonic spelling, e.g. `D♯m7` over B major but `E♭maj7` in B♭), left-handed mode, light/dark theme.
 
+## VST3 / AU plugin — Fretboard Lab Arp
+
+The [`plugin/`](plugin/README.md) folder contains **Fretboard Lab Arp**, a VST3 / AU / standalone
+instrument for DAWs built on the same engine (ported to C++ and checked against the web app on
+50,000+ cases): a clickable fretboard to pick or build each chord's arpeggio (own, ranked
+suggestions with fit %, typed or clicked), per-chord position and length, playback in sync with the
+host or from MIDI keys, a built-in plucked-string sound plus MIDI out — and **Import / Export of the
+same `.txt` files** as the web app. Builds for Windows, macOS and Linux are produced by the
+*Plugin* GitHub Actions workflow; see [plugin/README.md](plugin/README.md).
+
 ## Web app or .exe? — Recommendation: **web app**
 
 This is built as a web application, and the build output is a **single self-contained HTML file**
@@ -127,6 +137,8 @@ src/
   components/        React UI (SVG fretboard, chord diagrams, finder, explorer, progression)
   state/settings.ts  settings persisted in localStorage
 tests/               vitest suites (identification, parsing, keys, arpeggios, voicings, robustness)
+scripts/             generators for the plugin (chord tables + test vectors from this engine)
+plugin/              the VST3 / AU plugin (C++ / JUCE) — see plugin/README.md
 ```
 
 ### How the analysis works (short version)
