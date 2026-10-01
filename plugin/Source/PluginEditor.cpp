@@ -32,6 +32,21 @@ void fillChoices (juce::ComboBox& box, juce::RangedAudioParameter* p)
 const int kLengths[] = { 1, 2, 3, 4, 6, 8, 12, 16 };
 } // namespace
 
+void DragFileButton::mouseDrag (const juce::MouseEvent& e)
+{
+    if (dragging || e.getDistanceFromDragStart() < 6 || ! makeFile) return;
+    dragging = true;
+    const auto f = makeFile();
+    if (f.existsAsFile()) juce::DragAndDropContainer::performExternalDragDropOfFiles ({ f.getFullPathName() }, false, this);
+}
+
+void DragFileButton::mouseUp (const juce::MouseEvent& e)
+{
+    const bool wasDragging = dragging;
+    dragging = false;
+    if (! wasDragging) juce::TextButton::mouseUp (e);
+}
+
 ArpEditor::ArpEditor (ArpProcessor& p) : AudioProcessorEditor (&p), proc (p)
 {
     setLookAndFeel (&lnf);
@@ -131,6 +146,17 @@ ArpEditor::ArpEditor (ArpProcessor& p) : AudioProcessorEditor (&p), proc (p)
     leftBtn.onClick = [this] { moveChord (-1); };
     rightBtn.onClick = [this] { moveChord (1); };
     for (auto* b : { &setBtn, &addBtn, &removeBtn, &leftBtn, &rightBtn }) addAndMakeVisible (b);
+    saveMidiBtn.setTooltip ("Save the arpeggios (and backing) of the whole progression as a MIDI file");
+    saveMidiBtn.onClick = [this] { doSaveMidi(); };
+    dragMidiBtn.setTooltip ("Drag this button onto a track in your DAW to drop the progression's arpeggios as MIDI (click to save a file instead)");
+    dragMidiBtn.onClick = [this] { doSaveMidi(); };
+    dragMidiBtn.makeFile = [this] {
+        auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("Fretboard Lab Arp");
+        dir.createDirectory();
+        return writeMidi (dir.getChildFile (fileBaseName() + ".mid"));
+    };
+    addAndMakeVisible (saveMidiBtn);
+    addAndMakeVisible (dragMidiBtn);
     followToggle.setToggleState (true, juce::dontSendNotification);
     followToggle.setTooltip ("While playing, select (and show on the fretboard) the chord that is being played");
     addAndMakeVisible (followToggle);
@@ -314,6 +340,10 @@ void ArpEditor::resized()
     auto prog = area.removeFromTop (28);
     progressionLbl.setBounds (prog.removeFromLeft (84));
     followToggle.setBounds (prog.removeFromRight (130));
+    dragMidiBtn.setBounds (prog.removeFromRight (84));
+    prog.removeFromRight (4);
+    saveMidiBtn.setBounds (prog.removeFromRight (84));
+    prog.removeFromRight (12);
     for (auto* btn : { &rightBtn, &leftBtn })
     {
         btn->setBounds (prog.removeFromRight (30));
@@ -956,14 +986,46 @@ void ArpEditor::fretRightClick (int string, int fret, int midi)
     });
 }
 
-void ArpEditor::doExport()
+juce::String ArpEditor::fileBaseName() const
 {
     juce::String name = "fretboard-lab";
     for (auto& c : doc.chords) name << " " << u8 (fl::toAscii (c));
     juce::String safe;
     for (auto ch : name)
         safe << (juce::CharacterFunctions::isLetterOrDigit (ch) || juce::String ("#()+,-").containsChar (ch) ? juce::String::charToString (ch) : juce::String ("_"));
-    safe = safe.substring (0, 80);
+    return safe.substring (0, 80);
+}
+
+juce::File ArpEditor::writeMidi (const juce::File& f)
+{
+    const auto midi = proc.createMidiFile();
+    f.deleteFile();
+    juce::FileOutputStream out (f);
+    if (! out.openedOk() || ! midi.writeTo (out))
+    {
+        showStatus ("Could not write " + f.getFullPathName(), false);
+        return {};
+    }
+    return f;
+}
+
+void ArpEditor::doSaveMidi()
+{
+    chooser = std::make_unique<juce::FileChooser> ("Save the arpeggios as MIDI",
+                                                   juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile (fileBaseName() + ".mid"), "*.mid");
+    chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
+                          [this] (const juce::FileChooser& fc) {
+                              auto f = fc.getResult();
+                              if (f == juce::File()) return;
+                              if (! f.hasFileExtension ("mid")) f = f.withFileExtension ("mid");
+                              if (writeMidi (f).existsAsFile())
+                                  showStatus ("Saved the arpeggios of " + juce::String ((int) doc.chords.size()) + " chords as " + f.getFileName() + " (arpeggio: channel 1, backing: channel 2).");
+                          });
+}
+
+void ArpEditor::doExport()
+{
+    const auto safe = fileBaseName();
     chooser = std::make_unique<juce::FileChooser> ("Export progression + arpeggios",
                                                    juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile (safe + ".txt"), "*.txt");
     chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,

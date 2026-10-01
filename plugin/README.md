@@ -24,10 +24,13 @@ Formats: **VST3** (Windows, macOS, Linux), **AU** (macOS) and a **standalone app
   (the same list and percentages as the web app: Fmaj9 over Dm7 → Dm11, A♭dim7 over G7 → G7♭9…),
   a *Quick pick* row with the best ones, or **type your own** — a chord symbol (`Bbmaj7`, `F#m7b5`,
   `Eb(add#11,no3)`) or just notes (`E G B D`).
-- **Per-chord position and length** (½ bar … 4 bars), and a shared position for all chords.
+- **Per-chord position and length** (1 beat … 4 bars), and a shared position for all chords.
 - **Import / Export** in exactly the web app's `.txt` format — export in the browser, import in the
   plugin and back. *Copy* / *Paste* go through the clipboard, and a `.txt` file can be dropped on the
   window. The progression is also saved with your DAW project.
+- **MIDI file** — *Save MIDI* writes the whole progression's arpeggios (track 1, channel 1) and
+  backing (track 2, channel 2) as a `.mid` file; **drag the *Drag MIDI* button onto a DAW track**
+  to drop the part straight into your song and edit it there.
 - **Playback**
   - *Progression* mode follows the host's transport (bar 1 = chord 1, the progression loops), or
     press **Play** to use the plugin's own clock.

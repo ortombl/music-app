@@ -225,6 +225,50 @@ juce::String ArpProcessor::importText (const std::string& text, bool& ok)
     return msg;
 }
 
+juce::MidiFile ArpProcessor::createMidiFile() const
+{
+    juce::MidiFile file;
+    const PhraseData* pd = latest.load(); // message thread: only this thread frees phrases
+    if (pd == nullptr) return file;
+    const int tpq = 960;
+    file.setTicksPerQuarterNote (tpq);
+    const double bpm = params.getRawParameterValue (ids::tempo)->load();
+    const float gate = params.getRawParameterValue (ids::gate)->load();
+    const float vel = (float) params.getRawParameterValue (ids::velocity)->load() / 127.0f;
+    juce::MidiMessageSequence tracks[2];
+    tracks[0].addEvent (juce::MidiMessage::tempoMetaEvent (juce::roundToInt (60000000.0 / bpm)), 0);
+    tracks[0].addEvent (juce::MidiMessage::timeSignatureMetaEvent (4, 4), 0);
+    tracks[0].addEvent (juce::MidiMessage::textMetaEvent (3, "Fretboard Lab Arp - arpeggios"), 0);
+    tracks[1].addEvent (juce::MidiMessage::textMetaEvent (3, "Fretboard Lab Arp - backing"), 0);
+    const auto& notes = pd->phrase.notes;
+    for (size_t i = 0; i < notes.size(); ++i)
+    {
+        const auto& n = notes[i];
+        const double start = n.start * tpq;
+        double len = n.length * tpq * (n.channel == 0 ? gate : 1.0f);
+        // A note must end before the same pitch is struck again on its channel.
+        for (size_t k = i + 1; k < notes.size(); ++k)
+            if (notes[k].midi == n.midi && notes[k].channel == n.channel)
+            {
+                len = std::min (len, notes[k].start * tpq - start - 1);
+                break;
+            }
+        len = std::max (1.0, std::min (len, pd->phrase.length * tpq - start));
+        const auto v = (juce::uint8) juce::jlimit (1, 127, juce::roundToInt (n.velocity * vel * 127.0f));
+        auto& t = tracks[n.channel == 0 ? 0 : 1];
+        t.addEvent (juce::MidiMessage::noteOn (n.channel + 1, n.midi, v), start);
+        t.addEvent (juce::MidiMessage::noteOff (n.channel + 1, n.midi), start + len);
+    }
+    for (auto& t : tracks)
+    {
+        t.sort();
+        t.updateMatchedPairs();
+    }
+    file.addTrack (tracks[0]);
+    if (tracks[1].getNumEvents() > 1) file.addTrack (tracks[1]);
+    return file;
+}
+
 void ArpProcessor::setRunning (bool shouldRun)
 {
     if (shouldRun && ! internalRun.load()) resetInternal = true; // restart from the top

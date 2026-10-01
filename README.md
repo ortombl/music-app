@@ -64,8 +64,8 @@ The [`plugin/`](plugin/README.md) folder contains **Fretboard Lab Arp**, a VST3 
 instrument for DAWs built on the same engine (ported to C++ and checked against the web app on
 50,000+ cases): a clickable fretboard to pick or build each chord's arpeggio (own, ranked
 suggestions with fit %, typed or clicked), per-chord position and length, playback in sync with the
-host or from MIDI keys, a built-in plucked-string sound plus MIDI out — and **Import / Export of the
-same `.txt` files** as the web app. Builds for Windows, macOS and Linux are produced by the
+host or from MIDI keys, a built-in plucked-string sound plus MIDI out, drag-and-drop of the part as
+a MIDI file into the DAW — and **Import / Export of the same `.txt` files** as the web app. Builds for Windows, macOS and Linux are produced by the
 *Plugin* GitHub Actions workflow; see [plugin/README.md](plugin/README.md).
 
 ## Web app or .exe? — Recommendation: **web app**

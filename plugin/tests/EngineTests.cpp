@@ -6,6 +6,7 @@
 #include "../Source/PluginEditor.h"
 #include "../Source/PluginProcessor.h"
 
+#include <cstdlib>
 #include <iostream>
 
 namespace
@@ -170,6 +171,26 @@ int main (int argc, char** argv)
         check (countIn (notes, 0, 8, 2) > 0 && allIn (notes, 0, 2, { 2, 5, 9, 0 }, 2), "backing chord + bass on channel 2");
         p.params.getParameter (ids::backing)->setValueNotifyingHost (0);
         p.params.getParameter (ids::rate)->setValueNotifyingHost (p.params.getParameter (ids::rate)->convertTo0to1 (1));
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (150);
+    }
+
+    // MIDI file of the phrase (with backing on track 2).
+    {
+        p.params.getParameter (ids::backing)->setValueNotifyingHost (p.params.getParameter (ids::backing)->convertTo0to1 (2));
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (150);
+        const auto file = p.createMidiFile();
+        int arpNotes = 0, backNotes = 0;
+        bool paired = true;
+        for (int t = 0; t < file.getNumTracks(); ++t)
+            for (auto* e : *file.getTrack (t))
+                if (e->message.isNoteOn())
+                {
+                    (e->message.getChannel() == 1 ? arpNotes : backNotes)++;
+                    if (e->noteOffObject == nullptr || e->noteOffObject->message.getTimeStamp() <= e->message.getTimeStamp()) paired = false;
+                }
+        check (file.getNumTracks() == 2 && arpNotes == 16 && backNotes > 0 && paired,
+               "MIDI file: 2 tracks, 16 arpeggio notes (got " + juce::String (arpNotes) + "), backing, every note has an end");
+        p.params.getParameter (ids::backing)->setValueNotifyingHost (0);
         juce::MessageManager::getInstance()->runDispatchLoopUntil (150);
     }
 

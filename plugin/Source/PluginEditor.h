@@ -7,6 +7,20 @@
 #include "FretboardView.h"
 #include "PluginProcessor.h"
 
+/** A button that can also be dragged: dragging it drops a file (made on demand) into the DAW. */
+class DragFileButton : public juce::TextButton
+{
+public:
+    using juce::TextButton::TextButton;
+    std::function<juce::File()> makeFile;
+
+    void mouseDrag (const juce::MouseEvent& e) override;
+
+private:
+    bool dragging = false;
+    void mouseUp (const juce::MouseEvent& e) override;
+};
+
 class ArpEditor : public juce::AudioProcessorEditor, public juce::FileDragAndDropTarget, private juce::Timer
 {
 public:
@@ -44,6 +58,9 @@ private:
     void doImport();
     void doExport();
     void importFromText (const juce::String& text, const juce::String& source);
+    juce::String fileBaseName() const;
+    juce::File writeMidi (const juce::File& f);
+    void doSaveMidi();
 
     ArpProcessor& proc;
     theme::LookAndFeel lnf;
@@ -65,6 +82,8 @@ private:
     juce::Label progressionLbl;
     juce::TextEditor progressionEd;
     juce::TextButton setBtn { "Set" }, addBtn { "+ Chord" }, removeBtn { "Remove" }, leftBtn { "<" }, rightBtn { ">" };
+    juce::TextButton saveMidiBtn { "Save MIDI" };
+    DragFileButton dragMidiBtn { "Drag MIDI" };
     juce::ToggleButton followToggle { "Follow playback" };
     juce::Viewport stripView;
     ChordStrip strip;

@@ -6,14 +6,13 @@
 #
 # JUCE is downloaded automatically (or point FETCHCONTENT_SOURCE_DIR_JUCE at a local copy).
 cmake_minimum_required(VERSION 3.22)
+# Must be set before project(); ignored on other platforms.
+set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum macOS version")
 project(FretboardLabArp VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-if(APPLE)
-  set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum macOS version")
-endif()
 
 option(FL_BUILD_PLUGIN "Build the JUCE plugin (needs JUCE)" ON)
 option(FL_BUILD_TESTS "Build the music-theory core tests" ON)

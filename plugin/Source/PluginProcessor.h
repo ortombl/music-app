@@ -87,6 +87,10 @@ public:
     /** Import text; returns a status message. */
     juce::String importText (const std::string& text, bool& ok);
 
+    /** The progression's arpeggios (track 1, channel 1) and backing (track 2, channel 2) as a
+        Standard MIDI File at the current tempo — to drag or save into the DAW. */
+    juce::MidiFile createMidiFile() const;
+
     void setRunning (bool shouldRun);
     bool isRunning() const { return internalRun.load(); }
     /** Sound a note picked on the fretboard (and send it as MIDI). */
