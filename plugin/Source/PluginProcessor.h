@@ -81,6 +81,8 @@ public:
     const std::vector<fl::ResolvedSlot>& getResolved() const { return resolved; }
     /** Bumped whenever the song changes (the editor refreshes when it sees a new value). */
     int getSongVersion() const { return songVersion; }
+    /** Bumped whenever a new phrase is handed to the audio engine. */
+    int getPhraseVersion() const { return phraseVersion.load(); }
 
     /** Export text (readable table + [data]) for the current song — same format as the web app. */
     std::string exportText() const;
@@ -121,6 +123,7 @@ private:
     void publish (std::unique_ptr<PhraseData> data);
     PhraseData* acquirePhrase();
     std::atomic<PhraseData*> latest { nullptr }, inUse { nullptr };
+    std::atomic<int> phraseVersion { 0 };
     std::vector<std::unique_ptr<PhraseData>> owned; // message thread only
 
     // --- document (message thread; the mutex also covers get/setStateInformation) ---

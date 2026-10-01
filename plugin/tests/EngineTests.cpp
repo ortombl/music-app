@@ -102,6 +102,12 @@ int countIn (const std::vector<Note>& notes, double from, double to, int channel
     return n;
 }
 
+/** Let the processor's timer rebuild the phrase after a parameter change (waits up to 5 s). */
+void waitForRebuild (ArpProcessor& p, int before)
+{
+    for (int i = 0; i < 100 && p.getPhraseVersion() == before; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+}
+
 void snapshot (ArpProcessor& p, const juce::File& dir, const juce::String& name)
 {
     std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
@@ -155,9 +161,10 @@ int main (int argc, char** argv)
         s.slots = { { "Fmaj7", fl::SlotPosition::frets (0, 4), 2 }, { "Bdim", fl::SlotPosition::global(), 2 }, { "E G B D", fl::SlotPosition::neck(), 4 } };
         s.position = fl::FretWindow { 7, 11 };
         p.setSong (s);
+        int v = p.getPhraseVersion();
         p.params.getParameter (ids::backing)->setValueNotifyingHost (p.params.getParameter (ids::backing)->convertTo0to1 (2));
         p.params.getParameter (ids::rate)->setValueNotifyingHost (p.params.getParameter (ids::rate)->convertTo0to1 (3)); // 1/16
-        juce::MessageManager::getInstance()->runDispatchLoopUntil (150); // the timer rebuilds the phrase
+        waitForRebuild (p, v); // the timer rebuilds the phrase
         host.ppq = 0;
         auto notes = run (p, host, 8);
         check (countIn (notes, 0, 8, 1) == 32, "1/16 notes: 32 in 8 beats (got " + juce::String (countIn (notes, 0, 8, 1)) + ")");
@@ -168,16 +175,22 @@ int main (int argc, char** argv)
         check (lowFrets, "chord 1 is played in frets 0-4");
         check (allIn (notes, 2, 4, { 11, 2, 5 }), "chord 2 plays Bdim" + (std::getenv ("FL_DUMP") ? dump (notes) : juce::String()));
         check (allIn (notes, 4, 8, { 4, 7, 11, 2 }), "chord 3 plays the typed notes E G B D");
-        check (countIn (notes, 0, 8, 2) > 0 && allIn (notes, 0, 2, { 2, 5, 9, 0 }, 2), "backing chord + bass on channel 2");
+        std::vector<Note> backing;
+        for (auto& n : notes)
+            if (n.channel == 2) backing.push_back (n);
+        const bool backingOk = countIn (notes, 0, 8, 2) >= 12 && allIn (notes, 0, 1.9, { 2, 5, 9, 0 }, 2) && allIn (notes, 2.0, 3.9, { 7, 11, 2, 5 }, 2);
+        check (backingOk, "backing chord + bass on channel 2" + (backingOk ? juce::String() : dump (backing)));
+        v = p.getPhraseVersion();
         p.params.getParameter (ids::backing)->setValueNotifyingHost (0);
         p.params.getParameter (ids::rate)->setValueNotifyingHost (p.params.getParameter (ids::rate)->convertTo0to1 (1));
-        juce::MessageManager::getInstance()->runDispatchLoopUntil (150);
+        waitForRebuild (p, v);
     }
 
     // MIDI file of the phrase (with backing on track 2).
     {
+        int v = p.getPhraseVersion();
         p.params.getParameter (ids::backing)->setValueNotifyingHost (p.params.getParameter (ids::backing)->convertTo0to1 (2));
-        juce::MessageManager::getInstance()->runDispatchLoopUntil (150);
+        waitForRebuild (p, v);
         const auto file = p.createMidiFile();
         int arpNotes = 0, backNotes = 0;
         bool paired = true;
@@ -190,8 +203,9 @@ int main (int argc, char** argv)
                 }
         check (file.getNumTracks() == 2 && arpNotes == 16 && backNotes > 0 && paired,
                "MIDI file: 2 tracks, 16 arpeggio notes (got " + juce::String (arpNotes) + "), backing, every note has an end");
+        v = p.getPhraseVersion();
         p.params.getParameter (ids::backing)->setValueNotifyingHost (0);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil (150);
+        waitForRebuild (p, v);
     }
 
     // 3) Export → import round trip in the web app's format.

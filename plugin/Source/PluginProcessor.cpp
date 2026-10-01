@@ -161,6 +161,7 @@ void ArpProcessor::publish (std::unique_ptr<PhraseData> data)
     PhraseData* raw = data.get();
     owned.push_back (std::move (data));
     latest.store (raw);
+    phraseVersion++;
     // Free phrases the audio thread can no longer be using (see acquirePhrase).
     PhraseData* live = inUse.load();
     owned.erase (std::remove_if (owned.begin(), owned.end(), [&] (auto& p) { return p.get() != raw && p.get() != live; }), owned.end());
