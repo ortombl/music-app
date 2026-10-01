@@ -116,8 +116,14 @@ jobs:
           else
             curl -sSL -o pv.zip $base/pluginval_macOS.zip && unzip -q pv.zip
             ./pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --validate-in-process --validate "$vst3"
-            ./pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --validate-in-process \
-              --validate "plugin/build/FretboardLabArp_artefacts/Release/AU/Fretboard Lab Arp.component"
+            # macOS only finds Audio Units that are installed: install it, refresh the registry, validate.
+            au=~/Library/Audio/Plug-Ins/Components
+            mkdir -p "$au"
+            cp -R "plugin/build/FretboardLabArp_artefacts/Release/AU/Fretboard Lab Arp.component" "$au/"
+            killall -9 AudioComponentRegistrar 2>/dev/null || true
+            sleep 3
+            auval -v aumu FlAr Frlb
+            ./pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --validate-in-process --validate "$au/Fretboard Lab Arp.component"
           fi
 
       # Zipped here (not by upload-artifact) so macOS bundles and Linux binaries keep their permissions.
